@@ -125,6 +125,7 @@ export type BandAction =
   | { kind: 'pick'; card: Card; option: string } // an option of a decision card
   | { kind: 'later'; cardId: string } // the quiet exit on a decision card: deferred
   | { kind: 'send'; text: string; label: string } // a suggested answer
+  | { kind: 'dismiss' } // "Not for me" on a guessed question: the guess is dropped, nothing is sent
   | { kind: 'details' } // the Primary row's "Details": the "done when" line and the Lane
   // The Setup moment. `value` is what the field holds; `submit` is Enter in the field.
   | { kind: 'setupType'; field: 'file' | 'lane' | 'end'; value: string; submit?: true }
@@ -132,13 +133,16 @@ export type BandAction =
   | { kind: 'setupAddLane' } // "Add Lane"
   | { kind: 'setupRemoveLane'; laneId: string }
   | { kind: 'setupNext' } // "Skip" / "Done": the next step, or finish after the last
-// 'link' is the one quiet exit, drawn as a text link (v3 rule 4).
-export type BandButton = { key: string; label: string; variant?: 'primary' | 'secondary' | 'plain' | 'link'; action: BandAction }
+// 'link' is the one quiet exit, drawn as a text link (v3 rule 4). `detail` is the second line under
+// an answer: what follows from it (an option's consequence).
+export type BandButton = { key: string; label: string; variant?: 'primary' | 'secondary' | 'plain' | 'link'; detail?: string; action: BandAction }
+// Which v3 moment a 'rows' model is, so tests and render can tell without reading the rows.
+export type BandMoment = 'sent' | 'pick' | 'guessed' | 'working' | 'resting' | 'quiet'
 export type BandModel =
   | { kind: 'hidden' }
   | { kind: 'setup'; step: number; rows: BandRow[] }
   | { kind: 'gate'; buttons: BandButton[] }
-  | { kind: 'rows'; rows: BandRow[]; primary?: BandRow }
+  | { kind: 'rows'; moment: BandMoment; rows: BandRow[]; primary?: BandRow }
 // `source` is set only when the row is not a tool fact; `chip` only when hard to undo (v3 rule 2).
 export type BandRow = {
   part: PartId | 'setup' | 'sent'

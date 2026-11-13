@@ -1,10 +1,12 @@
 # Coanda: status
 
-> Updated by Claude, Fri 13 Nov 2026, 15:05 (Paris).
+> Updated by Claude, Fri 13 Nov 2026, 15:50 (Paris).
 
 ## Where it stopped
 
-- Repository created (`main` holds one empty commit; work is on `feat/seed`, nothing committed there yet).
+- Repository created (`main` holds one empty commit; work is on `feat/seed`: the seed is committed as `99258f5`; the `band` and `render` steps below are not committed).
+- **`hooks/render.tsx` rebuilt** (13 Nov, 15:45): draws the `rows` model and Setup, decides nothing. A row: label column (11 wide), first line (a question wraps in bold; a status line clips with `minWidth={0}`), the chip as "⚠ hard to undo" (mark + words, not colour alone), the source stamp dim at the row's end, then the buttons; an option's `detail` is a dim caption line under its button. The host's Button has no link style (only `plain`, `dimColor`, `primary`/`secondary`, read in the host types), so a `link` is a plain dim Button: on desktop it is still a native button. Primary row under the box: the goal, "Details"/"Less", the Lane line when open. `hidden` and `gate` draw nothing of ours. Kept: other mods' bands below ours after the SVG divider, outside any Box with a width; Setup's first field takes focus.
+- **`hooks/band.ts` rebuilt** (13 Nov, 15:35) from the plan below. `bandModel` order: Setup, idle stage (`lastActivity: 0` = unknown, full band), Sent, Small choice (open card via `questionToShow`, "Later" link, chip only when hard to undo, "N waiting" only above 1), Guessed question (stamped `inferred`, "Not for me" link), Working ("<step> · step N of M", else "Working"), Resting (finished plan, else Haiku's `done` stamped `inferred`, else "Idle"). Primary row: "◎ <goal>" + "Details"/"Less"; open shows the Lane only (no "done when" in `FocusResult`). `overBudget(model)` exported for the tests. Setup rows brought over ("Coanda asks once"). Types: `BandButton.detail`, `BandAction 'dismiss'`, and `moment` on the `rows` model, made **required** (not optional), with one extra value `quiet` for the Primary-only idle stage. `register.tsx`: `dismiss` clears `asked`, `suggestions`, `moment`. Smoke run of 17 cases (scratchpad copy, `node --experimental-strip-types`): all as expected; `overBudget` caught a planted 2-button resting band.
 - **Keep files copied** from `mod-area/plugins/intent/` with new ids: plugin `coanda`, version 0.1.0, tool `mcp__coanda__ask_decision` (in `desktop.test.tsx`). `question.ts` lost `SOMETHING_ELSE` (v3 rule 3).
 - **`types/index.d.ts` adapted** (13 Nov, 15:10): Legacy, View, Decided and Mirror types dropped. Added `DecisionStatus` (open, answered, deferred, superseded, cancelled), `DecisionOption` (label + consequence), `isHardToUndo`, `couldBeWrongIf`, `LineSource` (tool, agent, inferred) on cards and band rows, a `details` action and a `link` button for the quiet exit. Card's old `source` is now `askedBy`; `options` are objects, so `cards.ts` must follow.
 - **`hooks/imports.check.mjs` adapted** (13 Nov, 15:20): `rules`, `parts`, `mirror` removed from the lists. While `register.tsx` is missing, files not copied yet are listed, not failed. The old-name check now also catches the old plugin id where it is used as an id (quoted, tool prefix, state key). A planted old id in a scratch copy was caught.
@@ -19,14 +21,16 @@
 
 ## Checks
 
-- `tsc -p plugins/coanda/tsconfig.json` with TypeScript 5.9.3: **fails, as expected, until `band` and `render` exist**: 2 "cannot find module" errors plus 1 that follows from `render` missing (`action` has no type). No other error.
-- `claude plugin validate`: fails, as expected: `hooks.json` names `register.tsx`, which comes with the Adapt step. Also warns: no icon (logo not drawn yet).
-- `node hooks/imports.check.mjs`: seed mode ended (register exists): fails only on the 2 missing files `band`, `render`.
-- `claude plugin test`: not run yet (needs `register.tsx`).
+Run 13 Nov, 15:48, after `render.tsx`:
+
+- `tsc --noEmit -p plugins/coanda/tsconfig.json`, TypeScript 5.9.3: **passes** (exit 0).
+- `node hooks/imports.check.mjs`: **passes**, all 11 rules.
+- `claude plugin validate`: **passes with warnings** (no author, no icon). Directory-only: no LICENSE, refused for a directory submission, does not change the result.
+- `claude plugin test`: **passes**, 1 of 1 (15:55), after adding `on('session.id', () => ({ value: 's1' }))` to `hooks/desktop.test.tsx` (`snapshot()` now calls `$.session.id()`). `tsc` and `imports.check` rerun after it: still pass.
 
 ## Next action
 
-Adapt one file at a time, in this order: rebuild `band` and `render` from the v3 rules, then the tests. All checks should pass once those two exist.
+Adapt the tests from `mod-area/plugins/intent/hooks/intent.test.tsx` (keep the pure and Setup tests, drop Mirror and 0.1.x store, rewrite the band tests for v3, use `overBudget`). Then Nicolas looks at the band on screen (needs install + `/reload-plugins`).
 
 ## Plan for `band.ts` (worked out 13 Nov, 15:20, not written yet)
 

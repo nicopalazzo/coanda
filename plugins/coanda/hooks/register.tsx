@@ -211,6 +211,11 @@ async function dispatch($: Presser, action: BandAction): Promise<void> {
       return deferCard($, action.cardId, await $.clock.now())
     case 'send':
       return send($, action.text, action.label)
+    case 'dismiss':
+      await updateSuggestions($, () => [])
+      await updateMoment($, () => 'other')
+      await updateAsked($, () => null)
+      return
     case 'details':
       await updateDetailsOpen($, open => !open)
       return
