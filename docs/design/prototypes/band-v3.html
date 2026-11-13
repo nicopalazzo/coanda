@@ -1,0 +1,309 @@
+<title>Intent Band Prototype v3</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600&family=Fira+Code:wght@400;500&display=swap">
+<style>
+/* Layout: same mock Code tab as v1 and v2; v3 shows only what each moment's job needs, and the notes column measures what is on screen. */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --sunk:#eef0f4; --fg:#1b1f27; --muted:#4c5566;
+  --line:#c9ced8; --line-strong:#8a93a3; --accent:#2b54c9;
+  --ok:#1f7a4d; --warn:#9a5b00; --warn-soft:#fff3df; --risk:#b3261e; --risk-soft:#fde9e7; --v3:#0f6e78;
+  --font-ui:"Fira Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"Fira Code",ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#111419; --surface:#1a1e25; --sunk:#232832; --fg:#e7eaf0; --muted:#aab2c0;
+  --line:#3a414d; --line-strong:#6d7686; --accent:#8fa9ff;
+  --ok:#6fd3a0; --warn:#f0b45a; --warn-soft:#3a2d17; --risk:#ff8a80; --risk-soft:#3d1f1d; --v3:#5fd0da; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#111419; --surface:#1a1e25; --sunk:#232832; --fg:#e7eaf0; --muted:#aab2c0;
+  --line:#3a414d; --line-strong:#6d7686; --accent:#8fa9ff;
+  --ok:#6fd3a0; --warn:#f0b45a; --warn-soft:#3a2d17; --risk:#ff8a80; --risk-soft:#3d1f1d; --v3:#5fd0da; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-ui);font-size:15px;line-height:1.45;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 40px}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+header h1{font-size:22px;font-weight:600;margin:0;text-wrap:balance}
+header p{margin:4px 0 0;color:var(--muted);max-width:72ch}
+.tag{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.rules{margin:0;padding:0;list-style:none;display:grid;gap:6px 18px;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));font-size:14px}
+.rules li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:6px}
+.rules li span:first-child{font-family:var(--font-mono);color:var(--v3)}
+.picker{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}
+.picker button{flex:0 0 auto;min-height:44px;padding:0 14px;border:1px solid var(--line);background:var(--surface);color:var(--fg);
+  border-radius:8px;font:inherit;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:6px}
+.picker button[aria-pressed="true"]{border-color:var(--fg);font-weight:600}
+.picker button[aria-pressed="true"]::before{content:"▸"}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.main{display:grid;gap:16px;grid-template-columns:1fr}
+@media (min-width:1000px){.main{grid-template-columns:minmax(0,1fr) 340px;align-items:start}}
+.win{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;min-width:0;display:flex;flex-direction:column}
+.titlebar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--sunk);font-size:13px;color:var(--muted)}
+.dots{display:flex;gap:6px}.dots i{width:10px;height:10px;border-radius:50%;background:var(--line-strong);display:block}
+.chat{padding:16px;display:flex;flex-direction:column;gap:12px;min-height:160px}
+.msg{max-width:62ch;min-width:0}
+.msg.user{align-self:flex-end;background:var(--sunk);padding:8px 12px;border-radius:10px}
+.msg .who{font-size:12px;color:var(--muted);display:block;margin-bottom:2px}
+.msg.hl{outline:2px dashed var(--accent);outline-offset:4px;border-radius:4px}
+.fade{color:var(--muted)}
+.band{margin:0 12px;border:1.5px solid var(--line-strong);border-radius:10px;background:var(--surface);display:flex;flex-direction:column}
+.row{display:grid;grid-template-columns:84px minmax(0,1fr);gap:10px;padding:10px 12px;align-items:start}
+.row+.row{border-top:1px solid var(--line)}
+.lab{font-family:var(--font-mono);font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);padding-top:3px}
+.val{min-width:0;display:flex;flex-direction:column;gap:8px}
+.line1{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline}
+.q{font-weight:600}
+.prov{font-family:var(--font-mono);font-size:11px;color:var(--warn);white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid currentColor;white-space:nowrap;color:var(--risk);background:var(--risk-soft)}
+.btns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{min-height:44px;padding:6px 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);font:inherit;font-size:14px;cursor:pointer;text-align:left}
+.btn.strong{border:2px solid var(--fg);font-weight:600}
+.btn .sends{display:block;font-size:12.5px;color:var(--muted);font-weight:400;margin-top:2px}
+.link{background:none;border:0;padding:0 4px;min-height:44px;font:inherit;font-size:14px;color:var(--accent);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.why{display:flex;flex-direction:column;gap:6px}
+.why label{font-size:14px}
+input[type=text]{font:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--line-strong);border-radius:8px;background:var(--surface);color:var(--fg);width:100%;min-height:44px}
+.sent{color:var(--ok);font-weight:500}
+.primaryrow{margin:8px 12px 0;padding:4px;display:flex;flex-wrap:wrap;gap:2px 10px;align-items:center;font-size:14px}
+.primaryrow .p{font-weight:600}
+.primaryrow .more{flex-basis:100%;color:var(--muted);padding-left:4px}
+.prompt{margin:10px 12px 12px;border:1px solid var(--line);border-radius:10px;padding:12px;color:var(--muted);min-height:52px;font-size:14px;background:var(--sunk)}
+.sim{display:flex;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px dashed var(--line);font-size:13px;color:var(--muted)}
+.sim input{width:20px;height:20px}
+.mbar{display:flex;justify-content:flex-end;gap:16px;align-items:center;background:var(--sunk);border-bottom:1px solid var(--line);padding:6px 14px;font-size:13px}
+.mbar .item{border:1px solid var(--fg);border-radius:6px;padding:2px 8px;font-weight:500}
+.drop{margin:0 14px 0 auto;width:min(360px,100%);border:1px solid var(--line-strong);border-radius:10px;background:var(--surface);box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.drop .hd{padding:10px 12px;border-bottom:1px solid var(--line)}
+.sess{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:10px 12px;align-items:center}
+.sess .t{font-weight:500}.sess .s{font-size:13px;color:var(--muted)}
+.desk{padding:16px 0 24px;display:flex;flex-direction:column;gap:10px}
+.deskcap{padding:0 14px;font-size:13px;color:var(--muted);max-width:60ch}
+.notes{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.notes h2{font-size:17px;margin:0;font-weight:600;text-wrap:balance}
+.notes p{margin:0}
+.delta{border-left:3px solid var(--v3);padding:6px 10px;background:var(--sunk);border-radius:0 6px 6px 0;font-size:14px}
+.delta .tag{color:var(--v3);display:block}
+.count{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;text-align:center}
+.count div{border:1px solid var(--line);border-radius:8px;padding:6px 4px}
+.count b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.count span{font-size:11.5px;color:var(--muted)}
+.count .over{border-color:var(--risk)}
+.count .over b{color:var(--risk)}
+.ruleline{font-size:13px;color:var(--muted)}
+.foot{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:6px;max-width:85ch}
+.foot a{color:var(--accent)}
+@media (max-width:520px){
+  .row{grid-template-columns:1fr;gap:4px}
+  .band,.primaryrow,.prompt{margin-left:8px;margin-right:8px}
+  .btns .btn{width:100%}
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="tag">Prototype v3 · display rules applied · not the real interface</span>
+    <h1>Intent (working name): v3</h1>
+    <p>Same moments as v1 and v2. Each one shows only what its job needs. The notes column counts what is on screen right now, measured from the page, against the budget.</p>
+  </header>
+
+  <ul class="rules" aria-label="The six rules">
+    <li><span>1</span><span>Weight follows the job: nothing asked, one line; pick, the choices; judge, one input; check, one link to evidence.</span></li>
+    <li><span>2</span><span>Show exceptions only: a source stamp when a line isn't a tool fact, a chip when hard to undo, a queue count above 1.</span></li>
+    <li><span>3</span><span>Typing in the prompt is your own answer. No button for it.</span></li>
+    <li><span>4</span><span>One quiet exit, as a text link.</span></li>
+    <li><span>5</span><span>Budget: 2 lines when nothing is asked; 3 buttons and 1 chip when something is.</span></li>
+    <li><span>6</span><span>Primary row shows the goal only; details open on press. Lane settings live in Setup.</span></li>
+  </ul>
+
+  <nav class="picker" id="picker" aria-label="Moments"></nav>
+
+  <div class="main">
+    <section class="win" id="win" aria-label="Mock Code tab"></section>
+    <aside class="notes" id="notes" aria-live="polite"></aside>
+  </div>
+
+  <div class="foot">
+    <span>Compare: <a href="https://claude.ai/artifact/PFXo6qjHTHEWYjizonJcjp" target="_blank" rel="noopener">v1</a> (both researches, everything visible) · <a href="https://claude.ai/artifact/4AS9D9AMSvxhZrtPnBtDri" target="_blank" rel="noopener">v2</a> (Codex's findings added) · v3 (this page, display rules).</span>
+    <span>Example data. Nothing here is tested with users or seen in the real app.</span>
+  </div>
+</div>
+
+<script>
+(function(){
+const PRIMARY = {p:"Ship the v0.1 install", crit:"Done when a clean Mac installs it and sees Setup", lane:"Proof: portfolio MVP live by 18 Dec"};
+
+// asked: does this moment ask the person for something? (sets the budget)
+const S = [
+{ id:"rest", name:"Resting", asked:false,
+  chat:[["user","Thanks, that's merged."],["agent","Merged into main. Nothing is running."]],
+  band:()=>`<div class="row"><div class="lab">Now</div><div class="val">Idle · merged into main</div></div>`,
+  n:{h:"One line, no buttons", d:"v2 stamped the line with 'git event · 14:02'. v3 drops it: a tool fact is the normal case and needs no stamp.", job:"Nothing. Glance and carry on.", r:"Rules 1, 2, 6"}},
+
+{ id:"work", name:"Working", asked:false, sim:"Another session needs you",
+  chat:[["user","Split the tests for band.ts."],["agent","Starting. I'll split them by row and run the checks."]],
+  band:(on)=>`<div class="row"><div class="lab">Now</div><div class="val">Splitting band.ts tests · step 2 of 5</div></div>
+  ${on?`<div class="row"><div class="lab">Elsewhere</div><div class="val"><div class="btns"><span>1 other session waits on you</span><button class="link" data-act="open">Open it</button></div></div></div>`:''}`,
+  n:{h:"Working is not a moment to read", d:"v2 had 4 rows: NOW, Proposed, 2 updates, Elsewhere. v3 keeps NOW. Updates stay in the chat. Another session appears only when it waits on you; tick the box above the chat to see it.", job:"Nothing, unless another session waits.", r:"Rules 1, 5"}},
+
+{ id:"small", name:"Small choice", asked:true,
+  chat:[["agent","The helper that fills the prompt is called fill2. Rename it to fillSafely? It's used in one file."]],
+  band:()=>`<div class="row"><div class="lab">Question</div><div class="val">
+    <span class="q">Rename fill2 to fillSafely?</span>
+    <div class="btns">
+      <button class="btn" data-send="Rename to fillSafely">Rename to fillSafely<span class="sends">1 file</span></button>
+      <button class="btn" data-send="Keep fill2">Keep fill2<span class="sends">no change</span></button>
+    </div></div></div>`,
+  n:{h:"The question and two named answers", d:"v2 had 5 buttons, a 'reversible' chip, '1 of 2' and a source stamp. v3 keeps two answers. Reversible is the default, so no chip. To answer differently, type in the prompt.", job:"Pick one of two.", r:"Rules 1, 2, 3"}},
+
+{ id:"big", name:"Big choice", asked:true,
+  chat:[["agent","Before I build Setup: where should Lanes live? I have a recommendation."]],
+  band:(_,st)=>`<div class="row"><div class="lab">Decide</div><div class="val">
+    <div class="line1"><span class="q">Where should Lanes live?</span><span class="chip">⚠ Hard to undo</span></div>
+    ${!st.revealed?`
+    <div class="why"><label for="crit">First, what matters most to you here?</label>
+      <input id="crit" type="text" placeholder="Optional, one line">
+      <div class="btns"><button class="btn strong" data-act="reveal">Show the options</button><button class="link" data-act="evidence">I need evidence first</button></div></div>`
+    :`${st.crit?`<span class="fade">You said: ${esc(st.crit)}</span>`:''}
+      <div class="btns">
+        <button class="btn" data-send="Plugin store">Plugin store<span class="sends">works at install · moving back needs a migration</span></button>
+        <button class="btn" data-send="Keep the file">Keep the file<span class="sends">testers must create a FOCUS.md</span></button>
+        <button class="link" data-act="later">Later</button>
+      </div>`}
+  </div></div>`,
+  n:{h:"Two steps, one thing per step", d:"v2 showed context, 'could be wrong if', an 'open' chip, the criterion, two options and four exits at once. v3 splits it: your criterion first, then the options. Each step has one quiet link. The risk chip stays because this one is hard to undo.", job:"Think, then pick.", r:"Rules 1, 2, 4"}},
+
+{ id:"guess", name:"Guessed question", asked:true,
+  chat:[["agent","I've split the tests. The rules check could run on every reload, but that costs a model call each time. Do you want it on every reload or only at setup?"]],
+  band:()=>`<div class="row"><div class="lab">Question</div><div class="val">
+    <div class="line1"><span class="q">Rules check: every reload, or only at setup?</span><button class="link prov" data-act="src">inferred · see where</button></div>
+    <div class="btns">
+      <button class="btn" data-send="Only at setup">Only at setup</button>
+      <button class="btn" data-send="Every reload">Every reload</button>
+      <button class="link" data-act="notq">Not for me</button>
+    </div></div></div>`,
+  n:{h:"The guess label is the exception worth showing", d:"v2 had a chip, a 'show where' panel and four buttons. v3 turns the 'inferred' stamp itself into the link to the source sentence, and keeps 'Not for me' as the one exit.", job:"Pick, or say it isn't yours to answer.", r:"Rules 2, 4"}},
+
+{ id:"review", name:"Review a result", asked:true,
+  chat:[["agent","Setup is built. All done: 4 steps, 3 files."]],
+  band:()=>`<div class="row"><div class="lab">Check</div><div class="val">
+    <span>Tests and type-check pass. <b>Not checked: how it looks on screen.</b></span>
+    <div class="btns"><button class="btn strong" data-send="Checked on screen">I checked it on screen</button><button class="link" data-act="diff">Open the diff</button></div>
+  </div></div>`,
+  n:{h:"Show the gap, not the evidence pile", d:"v2 listed a reported line, three verified items with stamps and a diff. v3 says what passed in a few words and names the one thing nobody has checked yet. The diff is one link away.", job:"Check the one thing still unchecked.", r:"Rules 1, 2"}},
+
+{ id:"held", name:"Held at checkpoint", asked:true,
+  chat:[["agent","Tests are done. I could also try a few logo colours next."]],
+  band:()=>`<div class="row"><div class="lab">Held</div><div class="val">
+    <span class="q">Logo colours are outside "done when". What now?</span>
+    <div class="btns">
+      <button class="btn" data-act="park">Park it</button>
+      <button class="btn" data-act="side">Side quest, 20 min</button>
+      <button class="btn" data-act="switch">Change my Primary</button>
+    </div></div></div>`,
+  n:{h:"Already within budget", d:"Almost unchanged from v2. The explanation line is gone; the question says it in one sentence.", job:"Choose a direction.", r:"Rule 5 (3 buttons)"}},
+
+{ id:"back", name:"Coming back", asked:false,
+  chat:[["agent","…(42 minutes of work in this session)…"]],
+  band:()=>`<div class="row"><div class="lab">Back</div><div class="val">
+    <span>Since 13:58: Setup built and tested. <b>1 decision waits</b>; 1 older question expired.</span>
+    <div class="btns"><button class="btn strong" data-act="first">Show the decision</button></div>
+  </div></div>`,
+  n:{h:"One sentence to resume", d:"v2 used a four-line list with labels and a struck-out question. v3 says it in one sentence; the expired question is a count, not a row.", job:"Reorient, then go to what waits.", r:"Rules 1, 5"}},
+
+{ id:"first", name:"First thought", asked:true,
+  chat:[["user","Let's write the product page."]],
+  band:()=>`<div class="row"><div class="lab">First</div><div class="val">
+    <label for="take" class="q">What should a reader believe after the page?</label>
+    <input id="take" type="text" placeholder="One line">
+    <div class="btns"><button class="btn strong" data-send="My first thought">Send</button><button class="btn" data-send="I need evidence first">I need evidence first</button><button class="link" data-send="Skip">Skip</button></div>
+  </div></div>`,
+  n:{h:"One input, one send", d:"Close to v2. 'Skip' becomes the quiet link. 'Optional' leaves the label because Skip already says it.", job:"Write one line, or ask for evidence.", r:"Rules 1, 4"}},
+
+{ id:"end", name:"Session end", asked:true,
+  chat:[["user","That's it for today."]],
+  band:()=>`<div class="row"><div class="lab">Look back</div><div class="val">
+    <div class="btns"><span>One decision from today: "Where should Lanes live?" → Plugin store</span><button class="btn" data-act="first">Look at it</button><button class="link" data-send="Not today">Not today</button></div>
+  </div></div>`,
+  n:{h:"Mirror stays off; one opt-in look back", d:"v2 showed the look-back next to a NOW row while you were working. v3 shows it only when you end the session, on one line.", job:"Optional reflection.", r:"Rules 1, 4"}},
+
+{ id:"menu", name:"Menu bar (if needed)", asked:false, os:true,
+  n:{h:"Only what waits", d:"v2 listed every session with its state, including 'disconnected'. v3 lists only sessions that wait on you, and sums up the rest in one line.", job:"See if anything needs you; jump there.", r:"Rules 1, 2"}}
+];
+
+const picker=document.getElementById('picker'), win=document.getElementById('win'), notes=document.getElementById('notes');
+let cur=0, sent=null, simOn=false, primOpen=false, st={revealed:false,crit:""}, extra=null;
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+
+function renderPicker(){picker.innerHTML=S.map((s,i)=>`<button type="button" aria-pressed="${i===cur}" data-i="${i}">${esc(s.name)}</button>`).join('');}
+function primaryRow(){
+  return `<div class="primaryrow"><span>◎</span><span class="p">${esc(PRIMARY.p)}</span>
+  <button class="link" data-act="prim" aria-expanded="${primOpen}">${primOpen?'Less':'Details'}</button>
+  ${extra?`<span class="fade">· ${esc(extra)}</span>`:''}
+  ${primOpen?`<span class="more">${esc(PRIMARY.crit)} · ${esc(PRIMARY.lane)}</span>`:''}</div>`;
+}
+function renderWin(){
+  const s=S[cur];
+  if(s.os){
+    win.innerHTML=`<div class="mbar"><span class="fade">Fri 14:40</span><span class="item">◎ Ship the v0.1 install · 1 waits</span></div>
+    <div class="desk"><div class="drop band" role="group" aria-label="Menu bar panel">
+      <div class="sess"><div><div class="t">Claude Code · intent</div><div class="s">Where should Lanes live?</div></div><button class="btn strong" data-act="open">Open</button></div>
+      <div class="hd fade" style="border-top:1px solid var(--line);border-bottom:0;font-size:13px">3 other sessions: nothing needs you</div>
+    </div><p class="deskcap">Example data. Read-only: it opens the decision inside the app that asked it.</p></div>`;
+    renderNotes(); return;
+  }
+  const chat=s.chat.map(([w,t],i)=>`<div class="msg ${w}" id="m${i}"><span class="who">${w==='user'?'You':'Claude'}</span>${esc(t)}</div>`).join('');
+  let band=s.band(simOn,st);
+  if(sent) band=`<div class="row"><div class="lab">Sent</div><div class="val"><span class="sent">✓ ${esc(sent)}</span></div></div>`;
+  win.innerHTML=`<div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span>Code · intent</span></div>
+    ${s.sim?`<label class="sim"><input type="checkbox" id="sim" ${simOn?'checked':''}> Simulate: ${esc(s.sim)}</label>`:''}
+    <div class="chat">${chat}</div>
+    <div class="band" role="region" aria-label="The Band">${band}</div>
+    ${primaryRow()}
+    <div class="prompt" id="prompt">Reply to Claude… (typing here is always your own answer)</div>`;
+  const sim=document.getElementById('sim'); if(sim) sim.addEventListener('change',()=>{simOn=sim.checked;renderWin();});
+  renderNotes();
+}
+function measure(){
+  const b=win.querySelector('.band'); if(!b) return {lines:0,buttons:0,links:0,chips:0};
+  return {lines:b.querySelectorAll('.row').length + b.querySelectorAll('.sess').length,
+    buttons:b.querySelectorAll('button.btn').length, links:b.querySelectorAll('button.link').length,
+    chips:b.querySelectorAll('.chip').length};
+}
+function renderNotes(){
+  const s=S[cur], n=s.n, m=measure();
+  const lim = s.asked? {lines:2,buttons:3,links:1,chips:1} : {lines:2,buttons:1,links:1,chips:0};
+  const cell=(k,label)=>`<div class="${m[k]>lim[k]?'over':''}"><b>${m[k]}</b><span>${label} / ${lim[k]}</span></div>`;
+  notes.innerHTML=`<span class="tag">Moment ${cur+1} of ${S.length} · ${s.asked?'asks you something':'asks nothing'}</span>
+  <h2>${esc(n.h)}</h2>
+  <p><b>Your job here:</b> ${esc(n.job)}</p>
+  <div class="count" aria-label="Measured on screen">${cell('lines','rows')}${cell('buttons','buttons')}${cell('links','links')}${cell('chips','chips')}</div>
+  <span class="ruleline">Measured from the Band on screen now, against the budget. The Primary row (goal plus Details) is counted apart.</span>
+  <div class="delta"><span class="tag">Changed from v2</span>${esc(n.d)}</div>
+  <span class="ruleline">${esc(n.r)}</span>`;
+}
+function setPrompt(t){const p=document.getElementById('prompt'); if(p){p.textContent=t;p.style.color='var(--fg)';}}
+function go(i){cur=i;sent=null;simOn=false;st={revealed:false,crit:""};extra=null;renderPicker();renderWin();
+  try{localStorage.setItem('intent-proto-v3-tab',String(i))}catch(e){}}
+
+picker.addEventListener('click',e=>{const b=e.target.closest('button[data-i]');if(b)go(+b.dataset.i)});
+win.addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  if(b.dataset.send){sent='Sent: '+b.dataset.send;renderWin();return;}
+  const a=b.dataset.act;
+  if(a==='reveal'){st.crit=(document.getElementById('crit')||{}).value?.trim()||'';st.revealed=true;renderWin();}
+  else if(a==='evidence'){sent='Asked for evidence: both options with an example each';renderWin();}
+  else if(a==='later'){sent='Held for the next checkpoint. Nothing proceeds meanwhile.';renderWin();}
+  else if(a==='notq'){sent='Marked: not a question for you';renderWin();}
+  else if(a==='src'){const m=document.getElementById('m0'); if(m) m.classList.toggle('hl');}
+  else if(a==='diff') setPrompt('Show me the diff for Setup.');
+  else if(a==='park'){extra='Parked: logo colours';sent='Parked';renderWin();}
+  else if(a==='side'){extra='Side quest: logo colours, 20 min';sent='Side quest started';renderWin();}
+  else if(a==='switch') setPrompt('New Primary: [short title] · Done when: [one line]');
+  else if(a==='prim'){primOpen=!primOpen;renderWin();}
+  else if(a==='first'){go(S.findIndex(x=>x.id==='big'));}
+  else if(a==='open'){b.textContent='Would open it';}
+});
+let start=0; try{const v=+localStorage.getItem('intent-proto-v3-tab'); if(v>=0&&v<S.length) start=v;}catch(e){}
+go(start);
+})();
+</script>

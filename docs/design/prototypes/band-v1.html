@@ -1,0 +1,362 @@
+<title>Intent Band Prototype</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600&family=Fira+Code:wght@400;500&display=swap">
+<style>
+/* Layout: a mock Code-tab window (chat, the Band, the prompt) beside a notes column that says where each idea came from. Phone: stacked. */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --sunk:#eef0f4; --fg:#1b1f27; --muted:#4c5566;
+  --line:#c9ced8; --line-strong:#8a93a3; --accent:#2b54c9; --accent-soft:#e6ecfb;
+  --ok:#1f7a4d; --warn:#9a5b00; --warn-soft:#fff3df; --risk:#b3261e; --risk-soft:#fde9e7;
+  --font-ui:"Fira Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"Fira Code",ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#111419; --surface:#1a1e25; --sunk:#232832; --fg:#e7eaf0; --muted:#aab2c0;
+  --line:#3a414d; --line-strong:#6d7686; --accent:#8fa9ff; --accent-soft:#232d4a;
+  --ok:#6fd3a0; --warn:#f0b45a; --warn-soft:#3a2d17; --risk:#ff8a80; --risk-soft:#3d1f1d; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#111419; --surface:#1a1e25; --sunk:#232832; --fg:#e7eaf0; --muted:#aab2c0;
+  --line:#3a414d; --line-strong:#6d7686; --accent:#8fa9ff; --accent-soft:#232d4a;
+  --ok:#6fd3a0; --warn:#f0b45a; --warn-soft:#3a2d17; --risk:#ff8a80; --risk-soft:#3d1f1d; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-ui);font-size:15px;line-height:1.45;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 40px}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+header h1{font-size:22px;font-weight:600;margin:0;text-wrap:balance}
+header p{margin:4px 0 0;color:var(--muted);max-width:68ch}
+.tag{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+/* scenario picker */
+.picker{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}
+.picker button{flex:0 0 auto;min-height:44px;padding:0 14px;border:1px solid var(--line);background:var(--surface);color:var(--fg);
+  border-radius:8px;font:inherit;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:6px}
+.picker button[aria-pressed="true"]{border-color:var(--fg);font-weight:600}
+.picker button[aria-pressed="true"]::before{content:"▸"}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.main{display:grid;gap:16px;grid-template-columns:1fr}
+@media (min-width:1000px){.main{grid-template-columns:minmax(0,1fr) 340px;align-items:start}}
+/* mock window */
+.win{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;min-width:0;display:flex;flex-direction:column}
+.titlebar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--sunk);font-size:13px;color:var(--muted)}
+.dots{display:flex;gap:6px}.dots i{width:10px;height:10px;border-radius:50%;background:var(--line-strong);display:block}
+.chat{padding:16px;display:flex;flex-direction:column;gap:12px;min-height:180px}
+.msg{max-width:62ch;min-width:0}
+.msg.user{align-self:flex-end;background:var(--sunk);padding:8px 12px;border-radius:10px}
+.msg.agent{color:var(--fg)}
+.msg.agent .who,.msg.user .who{font-size:12px;color:var(--muted);display:block;margin-bottom:2px}
+.fade{color:var(--muted)}
+/* the band */
+.band{margin:0 12px;border:1.5px solid var(--line-strong);border-radius:10px;background:var(--surface);display:flex;flex-direction:column}
+.row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;padding:10px 12px;align-items:start}
+.row+.row{border-top:1px solid var(--line)}
+.lab{font-family:var(--font-mono);font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);padding-top:3px}
+.val{min-width:0;display:flex;flex-direction:column;gap:8px}
+.line1{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
+.q{font-weight:600}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);white-space:nowrap}
+.chip.rev{color:var(--ok);border-color:currentColor}
+.chip.hard{color:var(--risk);border-color:currentColor;background:var(--risk-soft)}
+.chip.info{color:var(--accent);border-color:currentColor}
+.facts{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;font-size:14px}
+.facts b{font-weight:500;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-right:6px}
+.btns{display:flex;flex-wrap:wrap;gap:8px}
+.btn{min-height:44px;padding:0 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);font:inherit;font-size:14px;cursor:pointer;text-align:left}
+.btn.primary{border:2px solid var(--fg);font-weight:600}
+.btn.quiet{border-style:dashed;color:var(--muted)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.sends{display:block;font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-top:2px;font-weight:400}
+.btn{padding-block:6px}
+.why{display:flex;flex-direction:column;gap:4px}
+.why label{font-size:13px;color:var(--muted)}
+input[type=text],textarea{font:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--line-strong);border-radius:8px;background:var(--surface);color:var(--fg);width:100%;min-height:44px}
+textarea{resize:vertical;min-height:64px}
+.sent{color:var(--ok);font-weight:500}
+.elsewhere{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;font-size:14px}
+.notice{border:1px solid var(--warn);background:var(--warn-soft);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.notice .h{font-weight:600}
+.art{border:1px solid var(--line);border-radius:8px;background:var(--sunk);padding:10px 12px;font-family:var(--font-mono);font-size:12.5px;overflow-x:auto}
+.art div{white-space:pre}
+.add{color:var(--ok)}.del{color:var(--risk)}
+.primaryrow{margin:8px 12px 0;padding:8px 4px;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;font-size:14px}
+.primaryrow .p{font-weight:600}
+.primaryrow .side{color:var(--muted)}
+.prompt{margin:10px 12px 12px;border:1px solid var(--line);border-radius:10px;padding:12px;color:var(--muted);min-height:52px;font-size:14px;background:var(--sunk)}
+/* menu bar mock */
+.mbar{display:flex;justify-content:flex-end;gap:16px;align-items:center;background:var(--sunk);border-bottom:1px solid var(--line);padding:6px 14px;font-size:13px}
+.mbar .item{border:1px solid var(--fg);border-radius:6px;padding:2px 8px;font-weight:500}
+.drop{margin:0 14px 0 auto;width:min(380px,100%);border:1px solid var(--line-strong);border-radius:10px;background:var(--surface);box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.drop .hd{padding:10px 12px;border-bottom:1px solid var(--line)}
+.sess{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:10px 12px;align-items:center}
+.sess+.sess{border-top:1px solid var(--line)}
+.sess .t{font-weight:500}
+.sess .s{font-size:13px;color:var(--muted)}
+.state{font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.state.wait{color:var(--risk)}.state.run{color:var(--accent)}.state.idle{color:var(--muted)}
+.desk{padding:16px 0 24px;display:flex;flex-direction:column;gap:10px}
+.deskcap{padding:0 14px;font-size:13px;color:var(--muted);max-width:60ch}
+/* notes */
+.notes{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.notes h2{font-size:17px;margin:0;font-weight:600;text-wrap:balance}
+.notes p{margin:0;color:var(--fg)}
+.src{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.src li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;font-size:14px;align-items:baseline}
+.who{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;padding:1px 6px;border-radius:4px;border:1px solid var(--line-strong);white-space:nowrap}
+.who.pp{border-color:var(--warn);color:var(--warn)}
+.who.cl{border-color:var(--accent);color:var(--accent)}
+.who.now{border-color:var(--ok);color:var(--ok)}
+.measure{border-top:1px solid var(--line);padding-top:12px;font-size:14px}
+.measure .tag{display:block;margin-bottom:4px}
+.foot{font-size:13px;color:var(--muted);max-width:80ch}
+@media (max-width:520px){
+  .row{grid-template-columns:1fr;gap:4px}
+  .band,.primaryrow,.prompt{margin-left:8px;margin-right:8px}
+  .btn{width:100%}
+}
+@media (prefers-reduced-motion:no-preference){.btn{transition:border-color .1s}}
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="tag">Prototype · not the real interface</span>
+    <h1>Intent: what the Band could become</h1>
+    <p>Each tab is one moment in a working session. The Band sits above the prompt. The right column says which research each idea came from and what it would measure. All text is example content.</p>
+  </header>
+
+  <nav class="picker" id="picker" aria-label="Moments"></nav>
+
+  <div class="main">
+    <section class="win" id="win" aria-label="Mock Code tab"></section>
+    <aside class="notes" id="notes" aria-live="polite"></aside>
+  </div>
+
+  <p class="foot">Labels: <span class="who now">today</span> already in Intent · <span class="who cl">Claude</span> from Claude's research and critique · <span class="who pp">Perplexity</span> from the Perplexity brief. Ideas marked by both came up in both. Nothing here is tested with users.</p>
+</div>
+
+<script>
+(function(){
+const PRIMARY = {p:"Ship Intent v0.1 install", lane:"Proof: portfolio MVP live", by:"by 18 Dec"};
+
+const S = [
+{ id:"quiet", name:"Quiet",
+  chat:[["user","Thanks, that's merged."],["agent","Merged into main. Nothing is running."]],
+  band:()=>``, // only primary row
+  notes:{h:"Nothing to say, nothing drawn",
+    p:"When no step runs and nothing is asked, only the Primary row shows. The Band stays in the corner of your eye.",
+    src:[["now","Primary row alone when idle (FR-8, fixes MA-1)"],["cl","Calm technology: peripheral by default, central only when needed"],["pp","Peripheral awareness; avoid another notification surface"]],
+    m:"Band kept on after two weeks (voluntary retention)"}},
+
+{ id:"working", name:"Working",
+  chat:[["user","Split the tests for band.ts."],["agent","Starting. I'll split them by row and run the checks."]],
+  band:()=>`
+  <div class="row"><div class="lab">Now</div><div class="val"><div class="line1"><span>Splitting band.ts tests</span><span class="chip info">step 2 of 5</span></div></div></div>
+  <div class="row"><div class="lab">Next</div><div class="val">Run the type-check, then show you the diff</div></div>
+  <div class="row"><div class="lab">FYI</div><div class="val"><div class="line1"><span>Tests pass on main after the merge.</span><button class="btn quiet" data-act="dismiss">Dismiss</button></div></div></div>
+  <div class="row"><div class="lab">Elsewhere</div><div class="val"><div class="elsewhere"><span>1 other session waits on you: <b>mirror</b> asks a question.</span><button class="btn" data-act="open">Open that session</button></div></div></div>`,
+  notes:{h:"Notify, don't interrupt",
+    p:"Three kinds of message, each in its own place: FYI (nothing to answer), a Question (blocks work), a Review (look at a result). Other sessions show as one line, not as a second Band.",
+    src:[["now","NOW and NEXT rows"],["cl","Notify / question / review, from LangChain's Agent Inbox"],["pp","Same three classes; do not treat every notification as urgent"],["cl","One line for other sessions: every comparable (Antigravity Inbox, Agent Signal Bar) works across agents"]],
+    m:"Decisions resolved per interruption"}},
+
+{ id:"low", name:"Low-risk question",
+  chat:[["agent","The helper that fills the prompt is called fill2. Rename it to fillSafely? It's used in one file."]],
+  band:()=>`
+  <div class="row"><div class="lab">Now</div><div class="val">Waiting for you</div></div>
+  <div class="row"><div class="lab">Question</div><div class="val">
+    <div class="line1"><span class="q">Rename fill2 to fillSafely?</span><span class="chip rev">↺ Reversible · 1 file</span></div></div></div>
+  <div class="row"><div class="lab">Reply with</div><div class="val"><div class="btns">
+    <button class="btn primary" data-send="Proceed as proposed">Proceed as proposed<span class="sends">sends: "Yes, rename it."</span></button>
+    <button class="btn" data-send="Keep fill2">Keep the old name<span class="sends">sends: "Keep fill2."</span></button>
+    <button class="btn quiet" data-act="fill">Something else</button>
+  </div></div></div>`,
+  notes:{h:"Friction in proportion to risk",
+    p:"A small change you can undo gets a one-press answer. This brings back a 'go' button on purpose, but only where the stakes are low. Each button shows the text it will send.",
+    src:[["pp","Proportional friction: reversibility, blast radius, ambiguity"],["pp","A fast 'Proceed as proposed' for low-risk reversible work"],["now","An Answer shows what it sends (FR-15, decided 12 Nov)"],["now","Challenges the 24 Oct decision to remove Go / Done"]],
+    m:"Share of low-risk questions answered in one press (should be high)"}},
+
+{ id:"high", name:"High-risk decision",
+  chat:[["agent","Before I build Setup: where should Lanes live? I'd store them in the plugin store."]],
+  band:()=>`
+  <div class="row"><div class="lab">Now</div><div class="val">Paused before Setup</div></div>
+  <div class="row"><div class="lab">Decide</div><div class="val">
+    <div class="line1"><span class="q">Keep Lanes in the plugin store, not in your Focus file?</span><span class="chip hard">⚠ Hard to undo · every user's saved data</span></div>
+    <ul class="facts">
+      <li><b>Assumes</b>People don't edit Lanes outside the Band.</li>
+      <li><b>Changes</b>Your FOCUS.md stops being read; moving back needs a migration.</li>
+    </ul></div></div>
+  <div class="row"><div class="lab">Reply with</div><div class="val">
+    <div class="btns">
+      <button class="btn" data-pick="Plugin store">Plugin store</button>
+      <button class="btn" data-pick="Keep the file">Keep the file</button>
+      <button class="btn quiet" data-act="explain">Explain the tradeoff</button>
+    </div>
+    <div class="why"><label for="why">Your reason, one line (needed for hard-to-undo choices)</label>
+      <input id="why" type="text" placeholder="e.g. Testers won't have a FOCUS.md"></div>
+    <div class="btns">
+      <button class="btn primary" id="sendDecision" disabled>Send decision</button>
+      <button class="btn quiet" data-act="later">At the next checkpoint</button>
+    </div>
+  </div></div>`,
+  notes:{h:"A decision card that names the consequence",
+    p:"The card says what it assumes, what changes, and whether it can be undone. No option is preselected. For hard-to-undo choices you write one line of why before it sends. Later holds it until the next checkpoint, with a limit.",
+    src:[["now","Decision card with two facts and Later (FR-13)"],["pp","Card shape: context, options, consequence, reversible flag, written rationale"],["cl","Counter automation bias: no preselected answer on risky choices"],["cl","Bounded deferral (Horvitz): hold, but only up to a set limit"],["pp","Same structured shape as ACP and MCP elicitation, so it can move to other hosts"]],
+    m:"Wrong-direction work caught before it was built"}},
+
+{ id:"review", name:"Review a result",
+  chat:[["agent","The plan for Setup is ready: 4 steps, 3 files. Have a look before I start."]],
+  band:()=>`
+  <div class="row"><div class="lab">Now</div><div class="val">Plan ready, nothing built yet</div></div>
+  <div class="row"><div class="lab">Review</div><div class="val">
+    <div class="line1"><span class="q">Setup plan · 4 steps · 3 files</span><span class="chip rev">↺ Nothing written yet</span></div>
+    <div class="art"><div>1  Ask for the Focus source</div><div>2  Type 1 to 3 Lanes, each an outcome</div><div>3  Show the Base rules with Copy</div><div>4  Ask this session's Primary</div><div class="add">+ hooks/setup.ts      (new)</div><div class="add">+ hooks/band.ts       +38</div><div class="del">- hooks/modules.ts    removed</div></div>
+    <div class="btns">
+      <button class="btn primary" data-send="Looks right, start">Looks right, start<span class="sends">sends: "Looks right, start."</span></button>
+      <button class="btn" data-act="fill">Change a step</button>
+      <button class="btn quiet" data-act="open">Open the full plan</button>
+    </div></div></div>`,
+  notes:{h:"Review results, not every tool call",
+    p:"At a milestone the Band shows one compact result: the plan and the files it touches. You review once, instead of reading a scrolling log.",
+    src:[["cl","Antigravity Artifacts and Inbox: comment on a plan or diff"],["pp","Review milestones, not each command"],["now","Steps mode today shows the agent's own list; this is the 'plan you agreed to' idea from backlog item 2"]],
+    m:"Rework after an approved plan"}},
+
+{ id:"drift", name:"Drift",
+  chat:[["user","Also, can you try a few logo colours?"],["agent","Here are three palettes for the logo…"]],
+  band:()=>`
+  <div class="row"><div class="lab">Now</div><div class="val">Making logo palettes</div></div>
+  <div class="row"><div class="lab">Off track</div><div class="val">
+    <div class="notice"><span class="h">The last 3 steps are about the logo, not your Primary.</span>
+      <div class="btns">
+        <button class="btn" data-send="Side quest">Side quest, 20 min<span class="sends">shows under the Primary with a timer</span></button>
+        <button class="btn" data-act="switch">Switch Primary</button>
+        <button class="btn primary" data-send="Back to the install">Back to the install</button>
+      </div></div></div></div>`,
+  side:"Side quest: logo palettes · 20 min",
+  notes:{h:"Protect the Primary by what the agent does",
+    p:"The Band compares the agent's recent steps with the Primary and says so once, in plain words. A short side quest is allowed and shows under the Primary with a time limit.",
+    src:[["pp","Goal adherence measured from agent actions, not self-report"],["pp","One Primary plus time-boxed side quests"],["now","Switch keeps the old Primary in the day's list (FR-4)"],["cl","Like Intend: nothing parked silently; you decide what carries on"]],
+    m:"Share of steps that serve the Primary"}},
+
+{ id:"draft", name:"Your take first",
+  chat:[["user","Let's write the product page."]],
+  band:()=>`
+  <div class="row"><div class="lab">Your take</div><div class="val">
+    <span class="q">Before Claude drafts: what should a reader believe after the page?</span>
+    <textarea id="take" placeholder="One sentence is enough"></textarea>
+    <div class="btns">
+      <button class="btn primary" data-send="My take">Send my take</button>
+      <button class="btn" data-send="I don't know yet">I don't know yet<span class="sends">sends: "I don't know yet, propose two angles."</span></button>
+      <button class="btn quiet" data-send="Skip">Skip</button>
+    </div></div></div>`,
+  notes:{h:"A first draft that isn't homework",
+    p:"Only at a start where your judgment is the work. One question that fits the task, one sentence is enough, and 'I don't know yet' is a valid answer that asks for options instead.",
+    src:[["now","Draft gate (FR-18 to FR-20, v0.1.x)"],["cl","Codex's note: one fitting question, not a three-line template"],["pp","Make it tiny; allow 'I don't know yet'; only for high-stakes kinds of work"]],
+    m:"Drafts written vs skipped (a high skip rate means wrong moments)"}},
+
+{ id:"mirror", name:"Mirror",
+  chat:[["user","ok"],["agent","Done. Next I'll wire the Setup screen."],["user","go"]],
+  band:()=>`
+  <div class="row"><div class="lab">Mirror</div><div class="val">
+    <span>8 answers in a row went through without a change.</span>
+    <span class="fade">Last decision that mattered: "Keep Lanes in the plugin store?" → Plugin store, 12:40.</span>
+    <div class="btns">
+      <button class="btn primary" data-act="open">Look at it again</button>
+      <button class="btn" data-send="Carry on">Carry on</button>
+      <button class="btn quiet" data-act="later">Snooze 1 hour</button>
+    </div></div></div>`,
+  notes:{h:"A mirror, not a warning",
+    p:"Same signal as today's Mirror, said neutrally. No score, no red. It points at the one decision worth a second look.",
+    src:[["now","Mirror takes over the Band when it fires"],["pp","Neutral framing: no accusation, no score"],["cl","A long run of approvals can be rational; show the decision, let the person judge"]],
+    m:"Second looks that led to a change"}},
+
+{ id:"os", name:"Menu bar (later)",
+  os:true,
+  notes:{h:"Across agents, answered in place",
+    p:"A later experiment: a menu-bar item shows today's Primary and how many sessions wait on you, across Claude Code, Codex and Cursor. Clicking opens the right session. You still answer inside each app.",
+    src:[["cl","Keep the Band; move the core (Primary, Lanes, questions, decisions) into a local store first"],["pp","Local daemon plus hooks; MCP and ACP elicitation for questions"],["cl","Session shows its intention in the menu bar; Agent Signal Bar shows agent state"],["cl","Ask the first 10 testers if they run agents outside Claude Desktop before building it"]],
+    m:"Time from 'a session waits' to an informed answer"}}
+];
+
+const picker=document.getElementById('picker'), win=document.getElementById('win'), notes=document.getElementById('notes');
+let cur=0, sent=null, picked=null, dismissed=false, side=null;
+
+function esc(s){return s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+
+function renderPicker(){
+  picker.innerHTML=S.map((s,i)=>`<button type="button" aria-pressed="${i===cur}" data-i="${i}">${esc(s.name)}</button>`).join('');
+}
+
+function primaryRow(){
+  const sq = side || (S[cur].side && sent==="Side quest" ? S[cur].side : null);
+  return `<div class="primaryrow"><span>◎ Primary</span><span class="p">${esc(PRIMARY.p)}</span><span>· ${esc(PRIMARY.lane)} ${esc(PRIMARY.by)}</span>${sq?`<span class="side">· ${esc(sq)}</span>`:''}</div>`;
+}
+
+function renderWin(){
+  const s=S[cur];
+  if(s.os){
+    win.innerHTML=`<div class="mbar"><span class="fade">Fri 14:10</span><span class="item">◎ Ship Intent v0.1 · 2 waiting</span></div>
+    <div class="desk">
+      <div class="drop" role="group" aria-label="Menu bar panel">
+        <div class="hd"><div class="tag">Primary</div><b>${esc(PRIMARY.p)}</b><div class="fade" style="font-size:13px">${esc(PRIMARY.lane)} ${esc(PRIMARY.by)}</div></div>
+        <div class="sess"><div><div class="t">Claude Code · intent</div><div class="s">Decide: keep Lanes in the plugin store?</div></div><div><span class="state wait">waits 6 min</span></div></div>
+        <div class="sess"><div><div class="t">Codex · mirror</div><div class="s">Review: nudge rule diff, 2 files</div></div><div><span class="state wait">waits 2 min</span></div></div>
+        <div class="sess"><div><div class="t">Cursor · site</div><div class="s">Building the product page</div></div><div><span class="state run">running</span></div></div>
+        <div class="sess"><div><div class="t">Claude Code · brand</div><div class="s">Done: three logo palettes</div></div><div><span class="state idle">idle</span></div></div>
+        <div style="padding:10px 12px;border-top:1px solid var(--line)"><button class="btn primary" style="width:100%" data-act="open">Open the oldest waiting session</button></div>
+      </div>
+      <p class="deskcap">Example data. States are words, not only colour. Answers still happen inside each app, where the agent's context is.</p>
+    </div>`;
+    return;
+  }
+  const chat=s.chat.map(([w,t])=>`<div class="msg ${w}"><span class="who">${w==='user'?'You':'Claude'}</span>${esc(t)}</div>`).join('');
+  let band=s.band();
+  if(sent && sent!=="Side quest"){
+    band=`<div class="row"><div class="lab">Reply with</div><div class="val"><span class="sent">✓ Sent: ${esc(sent)}</span><span class="fade">Claude is working… other presses are off until it replies.</span></div></div>`;
+  }
+  if(dismissed && s.id==='working') band=band.replace(/<div class="row"><div class="lab">FYI[\s\S]*?<\/div><\/div><\/div>/,'');
+  win.innerHTML=`<div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span>Code · intent</span></div>
+    <div class="chat">${chat}</div>
+    ${band.trim()?`<div class="band" role="region" aria-label="The Band">${band}</div>`:''}
+    ${primaryRow()}
+    <div class="prompt" id="prompt">Reply to Claude…</div>`;
+  const why=document.getElementById('why'), sd=document.getElementById('sendDecision');
+  if(why&&sd){
+    const upd=()=>{sd.disabled=!(picked && why.value.trim().length>3); sd.textContent=picked?`Send: ${picked}`:'Pick an option first';};
+    why.addEventListener('input',upd); upd();
+    sd.addEventListener('click',()=>{sent=`${picked} · because: ${why.value.trim()}`;renderWin();});
+  }
+}
+
+function renderNotes(){
+  const n=S[cur].notes;
+  const lab={now:"today",cl:"Claude",pp:"Perplexity"};
+  notes.innerHTML=`<span class="tag">Moment ${cur+1} of ${S.length}</span><h2>${esc(n.h)}</h2><p>${esc(n.p)}</p>
+  <ul class="src">${n.src.map(([w,t])=>`<li><span class="who ${w}">${lab[w]}</span><span>${esc(t)}</span></li>`).join('')}</ul>
+  <div class="measure"><span class="tag">Would measure</span>${esc(n.m)}</div>`;
+}
+
+function go(i){cur=i;sent=null;picked=null;dismissed=false;side=null;renderPicker();renderWin();renderNotes();
+  try{localStorage.setItem('intent-proto-tab',String(i))}catch(e){}}
+
+picker.addEventListener('click',e=>{const b=e.target.closest('button[data-i]');if(b)go(+b.dataset.i)});
+win.addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b||b.disabled) return;
+  if(b.dataset.send){ if(b.dataset.send==="Side quest"){side=S[cur].side;sent=null;
+      const prompt=document.getElementById('prompt'); renderWin(); return;}
+    sent=b.dataset.send; renderWin(); return;}
+  if(b.dataset.pick){picked=b.dataset.pick;
+    b.parentElement.querySelectorAll('[data-pick]').forEach(x=>x.classList.toggle('primary',x===b));
+    b.parentElement.querySelectorAll('[data-pick]').forEach(x=>x.setAttribute('aria-pressed',x===b));
+    document.getElementById('why').dispatchEvent(new Event('input')); return;}
+  const p=document.getElementById('prompt');
+  const act=b.dataset.act;
+  if(act==='dismiss'){dismissed=true;renderWin();}
+  else if(act==='fill'&&p){p.textContent='[your answer]';p.style.color='var(--fg)';}
+  else if(act==='explain'&&p){p.textContent='Explain the tradeoff between the plugin store and the file, in 3 lines.';p.style.color='var(--fg)';}
+  else if(act==='later'){sent='Held until the next checkpoint (at most 20 min)';renderWin();}
+  else if(act==='switch'&&p){p.textContent='New Primary: [a short title] · Lane: [pick one]';p.style.color='var(--fg)';}
+  else if(act==='open'){b.textContent='Would open it (prototype)';}
+});
+
+let start=0; try{const v=+localStorage.getItem('intent-proto-tab'); if(v>=0&&v<S.length) start=v;}catch(e){}
+go(start);
+})();
+</script>

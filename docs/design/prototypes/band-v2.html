@@ -1,0 +1,417 @@
+<title>Intent Band Prototype v2</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600&family=Fira+Code:wght@400;500&display=swap">
+<style>
+/* Layout: same mock Code tab as v1 (chat, Band, prompt) beside a notes column; v2 adds provenance, a decision lifecycle and a "changed from v1" line per moment. */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --sunk:#eef0f4; --fg:#1b1f27; --muted:#4c5566;
+  --line:#c9ced8; --line-strong:#8a93a3; --accent:#2b54c9; --accent-soft:#e6ecfb;
+  --ok:#1f7a4d; --warn:#9a5b00; --warn-soft:#fff3df; --risk:#b3261e; --risk-soft:#fde9e7; --cx:#6b3fa0;
+  --font-ui:"Fira Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"Fira Code",ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#111419; --surface:#1a1e25; --sunk:#232832; --fg:#e7eaf0; --muted:#aab2c0;
+  --line:#3a414d; --line-strong:#6d7686; --accent:#8fa9ff; --accent-soft:#232d4a;
+  --ok:#6fd3a0; --warn:#f0b45a; --warn-soft:#3a2d17; --risk:#ff8a80; --risk-soft:#3d1f1d; --cx:#c9a6ff; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#111419; --surface:#1a1e25; --sunk:#232832; --fg:#e7eaf0; --muted:#aab2c0;
+  --line:#3a414d; --line-strong:#6d7686; --accent:#8fa9ff; --accent-soft:#232d4a;
+  --ok:#6fd3a0; --warn:#f0b45a; --warn-soft:#3a2d17; --risk:#ff8a80; --risk-soft:#3d1f1d; --cx:#c9a6ff; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-ui);font-size:15px;line-height:1.45;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 40px}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+header h1{font-size:22px;font-weight:600;margin:0;text-wrap:balance}
+header p{margin:4px 0 0;color:var(--muted);max-width:70ch}
+.tag{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.picker{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}
+.picker button{flex:0 0 auto;min-height:44px;padding:0 14px;border:1px solid var(--line);background:var(--surface);color:var(--fg);
+  border-radius:8px;font:inherit;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:6px}
+.picker button[aria-pressed="true"]{border-color:var(--fg);font-weight:600}
+.picker button[aria-pressed="true"]::before{content:"▸"}
+.picker .new{font-family:var(--font-mono);font-size:10px;color:var(--cx);border:1px solid currentColor;border-radius:4px;padding:0 4px}
+button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.main{display:grid;gap:16px;grid-template-columns:1fr}
+@media (min-width:1000px){.main{grid-template-columns:minmax(0,1fr) 350px;align-items:start}}
+.win{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;min-width:0;display:flex;flex-direction:column}
+.titlebar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--sunk);font-size:13px;color:var(--muted)}
+.dots{display:flex;gap:6px}.dots i{width:10px;height:10px;border-radius:50%;background:var(--line-strong);display:block}
+.chat{padding:16px;display:flex;flex-direction:column;gap:12px;min-height:160px}
+.msg{max-width:62ch;min-width:0}
+.msg.user{align-self:flex-end;background:var(--sunk);padding:8px 12px;border-radius:10px}
+.msg .who{font-size:12px;color:var(--muted);display:block;margin-bottom:2px}
+.msg.hl{outline:2px dashed var(--accent);outline-offset:4px;border-radius:4px}
+.fade{color:var(--muted)}
+.band{margin:0 12px;border:1.5px solid var(--line-strong);border-radius:10px;background:var(--surface);display:flex;flex-direction:column}
+.row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;padding:10px 12px;align-items:start}
+.row+.row{border-top:1px solid var(--line)}
+.lab{font-family:var(--font-mono);font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);padding-top:3px}
+.val{min-width:0;display:flex;flex-direction:column;gap:8px}
+.line1{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
+.prov{font-family:var(--font-mono);font-size:11px;color:var(--muted);white-space:nowrap}
+.prov::before{content:"↳ "}
+.q{font-weight:600}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);white-space:nowrap}
+.chip.rev{color:var(--ok);border-color:currentColor}
+.chip.hard{color:var(--risk);border-color:currentColor;background:var(--risk-soft)}
+.chip.info{color:var(--accent);border-color:currentColor}
+.chip.state{font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.chip.inf{color:var(--warn);border-color:currentColor;border-style:dashed}
+.facts{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;font-size:14px}
+.facts b{font-weight:500;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin-right:6px}
+.btns{display:flex;flex-wrap:wrap;gap:8px}
+.btn{min-height:44px;padding:6px 14px;border-radius:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--fg);font:inherit;font-size:14px;cursor:pointer;text-align:left}
+.btn.strong{border:2px solid var(--fg);font-weight:600}
+.btn.quiet{border-style:dashed;color:var(--muted)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.btn .sends{display:block;font-size:12.5px;color:var(--muted);font-weight:400;margin-top:2px}
+.opt{display:flex;flex-direction:column;gap:6px}
+.opt .btn{width:100%;max-width:520px}
+.why{display:flex;flex-direction:column;gap:4px}
+.why label{font-size:13px;color:var(--muted)}
+input[type=text],textarea{font:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--line-strong);border-radius:8px;background:var(--surface);color:var(--fg);width:100%;min-height:44px}
+textarea{resize:vertical;min-height:60px}
+.sent{color:var(--ok);font-weight:500}
+.elsewhere{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;font-size:14px}
+.notice{border:1px solid var(--warn);background:var(--warn-soft);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.notice .h{font-weight:600}
+.art{border:1px solid var(--line);border-radius:8px;background:var(--sunk);padding:10px 12px;font-family:var(--font-mono);font-size:12.5px;overflow-x:auto}
+.art div{white-space:pre}
+.add{color:var(--ok)}.del{color:var(--risk)}
+.list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.list li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:baseline;font-size:14px}
+.struck{text-decoration:line-through;color:var(--muted)}
+details{font-size:14px}
+summary{cursor:pointer;min-height:32px;display:flex;align-items:center;color:var(--accent)}
+.primaryrow{margin:8px 12px 0;padding:8px 4px;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;font-size:14px}
+.primaryrow .p{font-weight:600}
+.primaryrow .crit{color:var(--muted)}
+.primaryrow .side{color:var(--muted)}
+.prompt{margin:10px 12px 12px;border:1px solid var(--line);border-radius:10px;padding:12px;color:var(--muted);min-height:52px;font-size:14px;background:var(--sunk)}
+.mbar{display:flex;justify-content:flex-end;gap:16px;align-items:center;background:var(--sunk);border-bottom:1px solid var(--line);padding:6px 14px;font-size:13px}
+.mbar .item{border:1px solid var(--fg);border-radius:6px;padding:2px 8px;font-weight:500}
+.drop{margin:0 14px 0 auto;width:min(390px,100%);border:1px solid var(--line-strong);border-radius:10px;background:var(--surface);box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.drop .hd{padding:10px 12px;border-bottom:1px solid var(--line)}
+.sess{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:10px 12px;align-items:center}
+.sess+.sess{border-top:1px solid var(--line)}
+.sess .t{font-weight:500}.sess .s{font-size:13px;color:var(--muted)}
+.state{font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.state.wait{color:var(--risk)}.state.run{color:var(--accent)}.state.idle{color:var(--muted)}.state.off{color:var(--warn)}
+.desk{padding:16px 0 24px;display:flex;flex-direction:column;gap:10px}
+.deskcap{padding:0 14px;font-size:13px;color:var(--muted);max-width:60ch}
+.notes{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.notes h2{font-size:17px;margin:0;font-weight:600;text-wrap:balance}
+.notes p{margin:0}
+.delta{border-left:3px solid var(--cx);padding:6px 10px;background:var(--sunk);border-radius:0 6px 6px 0;font-size:14px}
+.delta .tag{color:var(--cx);display:block}
+.src{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.src li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;font-size:14px;align-items:baseline}
+.who{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;padding:1px 6px;border-radius:4px;border:1px solid var(--line-strong);white-space:nowrap}
+.who.pp{border-color:var(--warn);color:var(--warn)}
+.who.cl{border-color:var(--accent);color:var(--accent)}
+.who.now{border-color:var(--ok);color:var(--ok)}
+.who.cx{border-color:var(--cx);color:var(--cx)}
+.measure{border-top:1px solid var(--line);padding-top:12px;font-size:14px}
+.measure .tag{display:block;margin-bottom:4px}
+.foot{font-size:13px;color:var(--muted);max-width:85ch;display:flex;flex-direction:column;gap:6px}
+.foot a{color:var(--accent)}
+@media (max-width:520px){
+  .row{grid-template-columns:1fr;gap:4px}
+  .band,.primaryrow,.prompt{margin-left:8px;margin-right:8px}
+  .btns .btn{width:100%}
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="tag">Prototype v2 · with Codex's findings · not the real interface</span>
+    <h1>Intent (working name): v2</h1>
+    <p>Same Band, rebuilt with Codex's research. Every row says where its information came from. Answers name a choice, never a generic "go". Decisions have a visible state. Each moment's notes start with what changed from v1. All text is example content.</p>
+  </header>
+
+  <nav class="picker" id="picker" aria-label="Moments"></nav>
+
+  <div class="main">
+    <section class="win" id="win" aria-label="Mock Code tab"></section>
+    <aside class="notes" id="notes" aria-live="polite"></aside>
+  </div>
+
+  <div class="foot">
+    <span>Labels: <span class="who now">today</span> already in Intent · <span class="who cl">Claude</span> · <span class="who pp">Perplexity</span> · <span class="who cx">Codex</span>. Nothing here is tested with users.</span>
+    <span>Compare with <a href="https://claude.ai/artifact/PFXo6qjHTHEWYjizonJcjp" target="_blank" rel="noopener">v1 of the prototype</a>. "Intent" is shown as a working name: an agent-coordination product called Intent already exists (intentapp.dev).</span>
+  </div>
+</div>
+
+<script>
+(function(){
+const PRIMARY = {p:"Ship the v0.1 install", crit:"Done when: a clean Mac installs it and sees Setup", lane:"Proof: portfolio MVP live by 18 Dec"};
+let laneOn = true;
+
+const S = [
+{ id:"quiet", name:"Resting",
+  chat:[["user","Thanks, that's merged."],["agent","Merged into main. Nothing is running."]],
+  band:()=>`
+  <div class="row"><div class="lab">Now</div><div class="val"><div class="line1"><span>Idle · last verified: merged into main</span><span class="prov">git event · 14:02</span></div></div></div>`,
+  notes:{h:"Primary plus one compact state",
+    d:"v1 showed only the Primary. v2 keeps one short NOW line with the last verified result and where it came from. The Primary carries a 'done when' line, and the Lane can be hidden or left unassigned.",
+    p:"The resting Band answers two questions at a glance: what am I working toward, and what is actually true now.",
+    src:[["cx","Resting state: Primary plus compact NOW; Lane expands from the goal"],["cx","Turn the goal into an observable boundary: an acceptance criterion"],["cx","Lane optional, 'not assigned' is valid"],["now","Primary row (FR-7)"]],
+    m:"Signal precision: share of shown rows the person found useful"}},
+
+{ id:"working", name:"Working",
+  chat:[["user","Split the tests for band.ts."],["agent","Starting. I'll split them by row and run the checks."]],
+  band:()=>`
+  <div class="row"><div class="lab">Now</div><div class="val"><div class="line1"><span>Splitting band.ts tests</span><span class="chip info">step 2 of 5</span><span class="prov">task list · 14:12</span></div></div></div>
+  <div class="row"><div class="lab">Proposed</div><div class="val"><div class="line1"><span>Run the type-check, then show you the diff</span><span class="prov">agent summary</span></div></div></div>
+  <div class="row"><div class="lab">Updates</div><div class="val"><details><summary>2 updates, nothing to answer</summary><ul class="list" style="margin-top:6px"><li><span class="prov">tool event 14:09</span><span>Tests pass on main</span></li><li><span class="prov">tool event 14:11</span><span>Lint fixed 3 warnings</span></li></ul></details></div></div>
+  <div class="row"><div class="lab">Elsewhere</div><div class="val"><div class="elsewhere"><span><b>mirror</b> session: 1 decision waiting · parked by you</span><button class="btn" data-act="open">Open it</button></div></div></div>`,
+  notes:{h:"State with its source, updates batched",
+    d:"v1 had a single FYI line. v2 folds updates into one closed group, labels NEXT as 'proposed', and stamps each line with its source and time. The other session says it is parked, so it doesn't compete with your Primary.",
+    p:"A line written by the agent and a line produced by a tool event look different, so a stale or guessed status can't pass as fact.",
+    src:[["cx","Say whether NOW came from a tool event, an agent summary or a guess, and when"],["cx","Batch awareness, keep urgency (Fitz 2019)"],["cx","Session purpose vs the Primary you attend to: park other sessions explicitly"],["cl","Notify / question / review"]],
+    m:"Interruption burden: unwanted alerts per session hour"}},
+
+{ id:"low", name:"Small choice",
+  chat:[["agent","The helper that fills the prompt is called fill2. Rename it to fillSafely? It's used in one file."]],
+  band:()=>`
+  <div class="row"><div class="lab">Now</div><div class="val">Waiting for you</div></div>
+  <div class="row"><div class="lab">Question</div><div class="val">
+    <div class="line1"><span class="q">Rename fill2 to fillSafely?</span><span class="chip rev">↺ Reversible · 1 file</span><span class="chip state">1 of 2</span><span class="prov">structured question</span></div>
+    <div class="opt">
+      <button class="btn" data-send="Rename to fillSafely">Rename to fillSafely<span class="sends">Changes 1 file. Undo with git.</span></button>
+      <button class="btn" data-send="Keep fill2">Keep fill2<span class="sends">No change.</span></button>
+    </div>
+    <div class="btns">
+      <button class="btn quiet" data-act="fill">Write my own answer</button>
+      <button class="btn quiet" data-act="inspect">Show the current code</button>
+      <button class="btn quiet" data-act="later">Decide later</button>
+    </div></div></div>`,
+  notes:{h:"Answers name the choice, not consent",
+    d:"v1 had a one-press 'Proceed as proposed'. v2 drops it: each answer says what it does and its consequence, none is preselected, and the queue shows '1 of 2'. Your 24 Oct decision (no Go buttons) stands.",
+    p:"Even a small choice stays a choice. Tool permissions stay in Claude's own prompts, so answering here never grants file or shell access.",
+    src:[["cx","No generic authorization button; semantic choices with consequences"],["cx","Show queued-question count and dependencies"],["cx","Offer custom answer, inspect, defer"],["pp","Proportional friction (kept as the reversible marker, not as a go button)"]],
+    m:"Appropriate reliance: accept when right, change when wrong"}},
+
+{ id:"high", name:"Big choice",
+  chat:[["agent","Before I build Setup: where should Lanes live? I have a recommendation."]],
+  band:()=>`
+  <div class="row"><div class="lab">Now</div><div class="val">Paused before Setup · nothing proceeds while this is open</div></div>
+  <div class="row"><div class="lab">Decide</div><div class="val">
+    <div class="line1"><span class="q">Where should Lanes live?</span><span class="chip hard">⚠ Hard to undo · every user's saved data</span><span class="chip state">open · 14:08</span></div>
+    <ul class="facts">
+      <li><b>Context</b>Setup stores Lanes once; testers may not have a FOCUS.md.</li>
+      <li><b>Could be wrong if</b>people edit Lanes in a file outside the Band.</li>
+    </ul>
+    <div class="why" id="critBox"><label for="crit">Before you see the options: what matters most to you here? (optional)</label>
+      <input id="crit" type="text" placeholder="e.g. works for testers with no setup">
+      <div class="btns"><button class="btn strong" id="reveal">Show the options</button><button class="btn quiet" data-act="evidence">I need evidence first</button></div></div>
+    <div class="opt" id="opts" hidden>
+      <button class="btn" data-send="Plugin store">Plugin store<span class="sends">Works for everyone at install. Moving back to a file needs a migration.</span></button>
+      <button class="btn" data-send="Keep the file">Keep the file<span class="sends">Your FOCUS.md stays the source. Testers must create one.</span></button>
+      <div class="btns"><button class="btn quiet" data-act="fill">Write my own answer</button><button class="btn quiet" data-act="later">At the next checkpoint</button></div>
+    </div>
+  </div></div>`,
+  notes:{h:"Your criterion first, then the options",
+    d:"v1 required a written reason after you picked. v2 asks for one criterion before the options appear, and it's optional. It adds 'Could be wrong if', a visible 'open' state, and 'I need evidence first'. Deferring never turns into a yes.",
+    p:"Seeing the agent's options first anchors you on its framing. Writing what matters before you see them is the lightest form of cognitive forcing.",
+    src:[["cx","Selective cognitive friction before the recommendation (Buçinca 2021)"],["cx","Show evidence that could disconfirm the proposal (Bansal 2021)"],["cx","Timeout must never authorize a consequential action"],["now","Decision card with facts and Later (FR-13)"]],
+    m:"Escaped wrong-direction rate on decisions like this one"}},
+
+{ id:"inferred", name:"Guessed question", isNew:true,
+  chat:[["agent","I've split the tests. The rules check could run on every reload, but that costs a Haiku call each time. Do you want it on every reload or only at setup?"]],
+  band:()=>`
+  <div class="row"><div class="lab">Question</div><div class="val">
+    <div class="line1"><span class="q">Run the rules check on every reload, or only at setup?</span><span class="chip inf">inferred from the reply</span></div>
+    <details id="orig"><summary>Show where it came from</summary><p class="fade" style="margin:6px 0 0">Highlighted in the chat above.</p></details>
+    <div class="opt">
+      <button class="btn" data-send="Only at setup">Only at setup<span class="sends">One model call per install.</span></button>
+      <button class="btn" data-send="Every reload">Every reload<span class="sends">One model call each reload.</span></button>
+    </div>
+    <div class="btns"><button class="btn quiet" data-act="fill">Write my own answer</button><button class="btn quiet" data-act="notq">That's not a question for me</button></div>
+  </div></div>`,
+  notes:{h:"A guess is labelled as a guess",
+    d:"New in v2. In v1, a question lifted from prose looked the same as one the agent asked through its tool. Now it is marked 'inferred', links to the original sentence, and you can say it isn't for you.",
+    p:"Prose extraction already produced a false question once (24 Oct). Structured questions come first; extracted ones are visibly second-class.",
+    src:[["cx","Prefer a typed decision event; if only prose exists, label it inferred and keep the original"],["cx","Unverified: that the last question in a reply is the one that needs you"],["now","Haiku reads the end of each reply (FR-12)"],["cl","Read host signals before parsing prose"]],
+    m:"Signal precision for inferred vs structured questions"}},
+
+{ id:"review", name:"Review a result",
+  chat:[["agent","Setup is built. All done: 4 steps, 3 files."]],
+  band:()=>`
+  <div class="row"><div class="lab">Now</div><div class="val"><div class="line1"><span>Reported done: Setup</span><span class="chip state">reported</span><span class="prov">agent summary · 14:20</span></div></div></div>
+  <div class="row"><div class="lab">Verified</div><div class="val">
+    <ul class="list">
+      <li><span class="add">✓</span><span>16 tests pass <span class="prov">tool event 14:19</span></span></li>
+      <li><span class="add">✓</span><span>Type-check clean <span class="prov">tool event 14:19</span></span></li>
+      <li><span class="fade">?</span><span>Not checked: how it looks on screen <span class="prov">needs you</span></span></li>
+    </ul>
+    <div class="art"><div class="add">+ hooks/setup.ts      (new)</div><div class="add">+ hooks/band.ts       +38</div><div class="del">- hooks/modules.ts    removed</div></div>
+    <div class="btns">
+      <button class="btn" data-act="inspect">Open the diff</button>
+      <button class="btn" data-send="Checked on screen">I checked it on screen<span class="sends">Marks the last item verified.</span></button>
+    </div></div></div>`,
+  notes:{h:"Reported is not verified",
+    d:"v1 showed one plan to approve. v2 separates what the agent reports from what a tool verified, and lists what nobody checked yet.",
+    p:"'Done' from the agent is a claim. The Band shows the evidence behind it and the gap, which for UI work is always your look on screen.",
+    src:[["cx","Distinguish reported from verified completion; show unknown explicitly"],["cx","Task completion is not outcome verification"],["cl","Review results, not every tool call"],["now","Every UI change needs Nicolas's look (NFR-7)"]],
+    m:"Observed rework after a 'done'"}},
+
+{ id:"drift", name:"Held at checkpoint",
+  chat:[["agent","Tests are done. I could also try a few logo colours next."]],
+  band:()=>`
+  <div class="row"><div class="lab">Held</div><div class="val">
+    <div class="notice"><span class="h">Proposed work is outside your 'done when': logo colours.</span>
+      <span class="fade" style="font-size:13px">Held at this checkpoint. Compared with the criterion you wrote, not judged by the agent alone.</span>
+      <div class="btns">
+        <button class="btn" data-act="park">Park it</button>
+        <button class="btn" data-act="side">Side quest, 20 min</button>
+        <button class="btn" data-act="switch">Change my Primary</button>
+      </div></div></div></div>`,
+  notes:{h:"Hold the branch, show the mismatch",
+    d:"v1 said 'the last 3 steps are about the logo' after the fact, judged by the agent. v2 catches the proposal before work starts, at a checkpoint, against the criterion you own.",
+    p:"An if-then rule: if the agent proposes work outside the criterion, hold it and ask at the next safe moment. Nothing is parked or dropped silently.",
+    src:[["cx","If the agent proposes work outside the criterion, hold it and show the mismatch at the next checkpoint"],["cx","Don't classify deviation using only the working agent"],["pp","Time-boxed side quests"],["now","Switch keeps the old Primary in the day's list (FR-4)"]],
+    m:"Goal continuity, blind-reviewed against the criterion"}},
+
+{ id:"return", name:"Coming back", isNew:true,
+  chat:[["agent","…(42 minutes of work in this session)…"]],
+  band:()=>`
+  <div class="row"><div class="lab">Back</div><div class="val">
+    <span>You were away 42 min.</span>
+    <ul class="list">
+      <li><span class="tag">Goal</span><span>${PRIMARY.p}</span></li>
+      <li><span class="tag">Verified</span><span>Setup tests pass <span class="prov">tool event 14:19</span></span></li>
+      <li><span class="tag">Open</span><span>2 decisions · the first blocks Setup</span></li>
+      <li><span class="tag">Superseded</span><span class="struck">Use the plugin store?</span> <span class="fade">The plan changed at 13:50; your answer was not sent.</span></li>
+    </ul>
+    <div class="btns"><button class="btn strong" data-act="first">Show the first decision</button></div>
+  </div></div>`,
+  notes:{h:"Resume without rereading the chat",
+    d:"New in v2. When you return, one view gives the goal, the last verified result, what's open, and any question that went stale while you were away.",
+    p:"The decision lifecycle (open, answered, deferred, superseded, cancelled) makes stale answers visible instead of letting an old question come back.",
+    src:[["cx","Support resumption: goal, last verified result, unresolved decision (Mark 2008)"],["cx","Decision lifecycle; reject or visibly expire stale answers"],["now","CEO review F1: a late answer can bring back an old question"]],
+    m:"Resumption time to a correct account of the session"}},
+
+{ id:"draft", name:"First thought",
+  chat:[["user","Let's write the product page."]],
+  band:()=>`
+  <div class="row"><div class="lab">First thought</div><div class="val">
+    <span class="q">What should a reader believe after the page? (optional)</span>
+    <input id="take" type="text" placeholder="One line">
+    <div class="btns">
+      <button class="btn strong" data-send="My first thought">Send my first thought</button>
+      <button class="btn" data-send="I need evidence first">I need evidence first<span class="sends">Asks for two angles with examples.</span></button>
+      <button class="btn quiet" data-send="Skip">Skip</button>
+    </div></div></div>`,
+  notes:{h:"Opt-in, one line, and 'I need evidence first'",
+    d:"v1 offered 'I don't know yet'. v2 makes the gate opt-in, one line, and adds 'I need evidence first', for when you lack the expertise or energy.",
+    p:"Effort isn't judgment. The strongest forcing works best but is liked least, so it runs only on selected judgment starts and is compared against no gate.",
+    src:[["cx","Draft gate can punish people who lack expertise or energy"],["cx","Test it against no gate on comparable tasks"],["now","Draft gate (FR-18 to FR-20)"],["pp","Make it tiny"]],
+    m:"Comprehension and reliance, not drafts written"}},
+
+{ id:"mirror", name:"Mirror (off)",
+  chat:[["user","ok"],["agent","Done. Next I'll wire the Setup screen."],["user","go"]],
+  band:()=>`
+  <div class="row"><div class="lab">Now</div><div class="val"><div class="line1"><span>Wiring the Setup screen</span><span class="prov">task list · 14:31</span></div></div></div>
+  <div class="row"><div class="lab">Session end</div><div class="val">
+    <span>Optional: look back at one decision from today?</span>
+    <span class="fade">"Where should Lanes live?" → Plugin store, 14:12</span>
+    <div class="btns"><button class="btn" data-act="first">Look at it</button><button class="btn quiet" data-send="Not today">Not today</button></div>
+  </div></div>`,
+  notes:{h:"Mirror stays off in the first pilot",
+    d:"v1 showed a neutral Mirror nudge after 8 approvals. v2 turns it off for the pilot. The only trace is an opt-in look back at one concrete decision when the session ends. No streak count, no score.",
+    p:"A run of 'ok' can't show what you understood, and repeated warnings get ignored. Reflection on one real decision is a weaker but safer signal.",
+    src:[["cx","Mirror off in the first pilot; later an opt-in end-of-session reflection"],["cx","Repeated warnings habituate (Anderson 2016)"],["pp","Neutral framing"],["now","Mirror takeover code stays, acts only when installed"]],
+    m:"Second looks that led to a change"}},
+
+{ id:"os", name:"Menu bar (if needed)",
+  os:true,
+  notes:{h:"Read-only, and only if people miss decisions",
+    d:"v1 showed this as the later step. v2 makes it conditional: add it only if testers miss decisions because Claude isn't visible. It's read-only, links to the decision inside each app, and shows 'disconnected' honestly.",
+    p:"A menu bar sees every app but understands none of them. Each agent still needs its own adapter; a shared local service comes only with the second one.",
+    src:[["cx","Route: Claude mod first, prove the benefit, second adapter, then a shared service or menu bar"],["cx","Start read-only, deep-link to native decisions"],["cl","Ask testers whether they run agents elsewhere"],["pp","Local daemon and protocols (deferred)"]],
+    m:"Decisions missed because the host wasn't visible"}}
+];
+
+const picker=document.getElementById('picker'), win=document.getElementById('win'), notes=document.getElementById('notes');
+let cur=0, sent=null, side=null, parked=false;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function renderPicker(){
+  picker.innerHTML=S.map((s,i)=>`<button type="button" aria-pressed="${i===cur}" data-i="${i}">${esc(s.name)}${s.isNew?' <span class="new">new</span>':''}</button>`).join('');
+}
+function primaryRow(){
+  return `<div class="primaryrow"><span>◎ Primary</span><span class="p">${esc(PRIMARY.p)}</span><span class="crit">· ${esc(PRIMARY.crit)}</span>
+  ${laneOn?`<span>· ${esc(PRIMARY.lane)}</span>`:`<span class="fade">· Lane not assigned</span>`}
+  <button class="btn quiet" data-act="lane" style="min-height:32px;padding:2px 10px;font-size:12.5px">${laneOn?'Hide Lane':'Pick a Lane'}</button>
+  ${side?`<span class="side">· Side quest: ${esc(side)}</span>`:''}${parked?`<span class="side">· Parked: logo colours</span>`:''}</div>`;
+}
+function renderWin(){
+  const s=S[cur];
+  if(s.os){
+    win.innerHTML=`<div class="mbar"><span class="fade">Fri 14:40</span><span class="item">◎ Ship the v0.1 install · 1 decision</span></div>
+    <div class="desk"><div class="drop" role="group" aria-label="Menu bar panel">
+      <div class="hd"><div class="tag">Primary</div><b>${esc(PRIMARY.p)}</b><div class="fade" style="font-size:13px">${esc(PRIMARY.crit)}</div></div>
+      <div class="sess"><div><div class="t">Claude Code · intent</div><div class="s">Decide: where should Lanes live?</div></div><span class="state wait">waits 6 min</span></div>
+      <div class="sess"><div><div class="t">Codex · mirror</div><div class="s">Parked by you</div></div><span class="state idle">parked</span></div>
+      <div class="sess"><div><div class="t">Cursor · site</div><div class="s">No adapter yet: state unknown</div></div><span class="state off">disconnected</span></div>
+      <div style="padding:10px 12px;border-top:1px solid var(--line)"><button class="btn strong" style="width:100%" data-act="open">Open the decision in Claude</button></div>
+    </div><p class="deskcap">Example data. Read-only: it never answers for you. Built only if testers miss decisions because Claude wasn't visible.</p></div>`;
+    return;
+  }
+  const chat=s.chat.map(([w,t],i)=>`<div class="msg ${w}" id="m${i}"><span class="who">${w==='user'?'You':'Claude'}</span>${esc(t)}</div>`).join('');
+  let band=s.band();
+  if(sent){
+    band=`<div class="row"><div class="lab">Sent</div><div class="val"><span class="sent">✓ Sent: ${esc(sent)}</span><span class="fade">Answered · other presses are off until Claude replies.</span></div></div>`;
+  }
+  win.innerHTML=`<div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span>Code · intent</span></div>
+    <div class="chat">${chat}</div>
+    <div class="band" role="region" aria-label="The Band">${band}</div>
+    ${primaryRow()}
+    <div class="prompt" id="prompt">Reply to Claude…</div>`;
+  const reveal=document.getElementById('reveal');
+  if(reveal) reveal.addEventListener('click',()=>{
+    const c=document.getElementById('crit').value.trim();
+    document.getElementById('opts').hidden=false;
+    reveal.parentElement.hidden=true;
+    if(c){const l=document.querySelector('#critBox label');l.textContent='What matters most to you: '+c;}
+    document.getElementById('crit').hidden=true;
+  });
+  const orig=document.getElementById('orig');
+  if(orig) orig.addEventListener('toggle',()=>{const m=document.getElementById('m0'); if(m) m.classList.toggle('hl',orig.open);});
+}
+function renderNotes(){
+  const n=S[cur].notes, lab={now:"today",cl:"Claude",pp:"Perplexity",cx:"Codex"};
+  notes.innerHTML=`<span class="tag">Moment ${cur+1} of ${S.length}</span><h2>${esc(n.h)}</h2>
+  <div class="delta"><span class="tag">${S[cur].isNew?'New in v2':'Changed from v1'}</span>${esc(n.d)}</div>
+  <p>${esc(n.p)}</p>
+  <ul class="src">${n.src.map(([w,t])=>`<li><span class="who ${w}">${lab[w]}</span><span>${esc(t)}</span></li>`).join('')}</ul>
+  <div class="measure"><span class="tag">Would measure</span>${esc(n.m)}</div>`;
+}
+function setPrompt(t){const p=document.getElementById('prompt'); if(p){p.textContent=t;p.style.color='var(--fg)';}}
+function go(i){cur=i;sent=null;side=null;parked=false;renderPicker();renderWin();renderNotes();
+  try{localStorage.setItem('intent-proto-v2-tab',String(i))}catch(e){}}
+
+picker.addEventListener('click',e=>{const b=e.target.closest('button[data-i]');if(b)go(+b.dataset.i)});
+win.addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b||b.disabled||b.id==='reveal') return;
+  if(b.dataset.send){sent=b.dataset.send;renderWin();return;}
+  const a=b.dataset.act;
+  if(a==='fill') setPrompt('[your answer]');
+  else if(a==='inspect') setPrompt('Show me the code this touches before I decide.');
+  else if(a==='evidence'){sent='I need evidence first: show both options with an example each';renderWin();}
+  else if(a==='later'){sent='Deferred to the next checkpoint (nothing proceeds meanwhile)';renderWin();}
+  else if(a==='notq'){sent='Marked as not a question for me';renderWin();}
+  else if(a==='park'){parked=true;sent='Parked: logo colours';renderWin();}
+  else if(a==='side'){side='logo colours · 20 min';sent='Side quest started, 20 min';renderWin();}
+  else if(a==='switch') setPrompt('New Primary: [short title] · Done when: [one line]');
+  else if(a==='lane'){laneOn=!laneOn;renderWin();}
+  else if(a==='first'){go(S.findIndex(s=>s.id==='high'));}
+  else if(a==='open'){b.textContent='Would open it (prototype)';}
+});
+let start=0; try{const v=+localStorage.getItem('intent-proto-v2-tab'); if(v>=0&&v<S.length) start=v;}catch(e){}
+go(start);
+})();
+</script>

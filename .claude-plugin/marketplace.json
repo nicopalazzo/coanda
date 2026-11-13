@@ -1,0 +1,8 @@
+{
+  "name": "coanda",
+  "description": "A decision aid inside Claude Code: the session's goal, what the agent is doing now, and one question at a time",
+  "owner": { "name": "Nicolas Palazzo" },
+  "plugins": [
+    { "name": "coanda", "source": "./plugins/coanda", "description": "A calm band above the prompt: the goal, what the agent is doing now, one question at a time" }
+  ]
+}
