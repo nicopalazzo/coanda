@@ -1,10 +1,13 @@
 # Coanda: status
 
-> Updated by Claude, Fri 13 Nov 2026, 15:50 (Paris).
+> Updated by Claude, Fri 13 Nov 2026, 16:15 (Paris).
 
 ## Where it stopped
 
 - Repository created (`main` holds one empty commit; work is on `feat/seed`: the seed is committed as `99258f5`; the `band` and `render` steps below are not committed).
+- **`hooks/coanda.test.tsx`, part 2** (13 Nov, 16:15; not committed): the 19 host tests. 14 adapted one to one (Focus source ×4, Setup ×9, typed text kept) plus FR-7 c1 to c5 (Lane read after pressing `primary-details`; c1 also checks "Less"; c4's model part rewritten on the v3 snapshot). The old card test split into 5: card press / Sent / Later / "2 waiting" / another mod below; typing answers the open card; guessed question (inferred stamp, suggestion, "Not for me", typing); NOW from the task list; reload recovery via `turn.step`. `bandOver` now also stands for the prompt, the model, toasts, turns and `turn.step`. Mutation check on a scratchpad copy (Later drawn as a button, count shown at 1): 4 tests fail, as they should.
+- **Open, seen while writing the tests:** a deferred card ("Later") never comes back; the tests check that as it is. Decide when it returns (STATUS's earlier open question).
+- **`hooks/coanda.test.tsx`, part 1** (13 Nov, 16:00; not committed): the 16 host-free tests of the old 37 kept as they were, except example data (Intent → Coanda, "mod area" → "band", "Decided list" / "Connect Mirror" → neutral words). Plus 13 new pure tests: Setup first; Resting; Working; Sent; Small choice; exceptions (chip, count, other session, deferred); Guessed question; idle stages; Primary row and Details; budget on 7 moments plus a band overfilled on purpose; `toCard` refusals and "Later" dropped; `close` / `supersede`; `toAsked` / `questionToShow`. Sort of the old 37 (from their names and bodies, read in full): keep 16, adapt 19 (part 2, they mount the band), drop 2 (Mirror state, 0.1.x store).
 - **`hooks/render.tsx` rebuilt** (13 Nov, 15:45): draws the `rows` model and Setup, decides nothing. A row: label column (11 wide), first line (a question wraps in bold; a status line clips with `minWidth={0}`), the chip as "⚠ hard to undo" (mark + words, not colour alone), the source stamp dim at the row's end, then the buttons; an option's `detail` is a dim caption line under its button. The host's Button has no link style (only `plain`, `dimColor`, `primary`/`secondary`, read in the host types), so a `link` is a plain dim Button: on desktop it is still a native button. Primary row under the box: the goal, "Details"/"Less", the Lane line when open. `hidden` and `gate` draw nothing of ours. Kept: other mods' bands below ours after the SVG divider, outside any Box with a width; Setup's first field takes focus.
 - **`hooks/band.ts` rebuilt** (13 Nov, 15:35) from the plan below. `bandModel` order: Setup, idle stage (`lastActivity: 0` = unknown, full band), Sent, Small choice (open card via `questionToShow`, "Later" link, chip only when hard to undo, "N waiting" only above 1), Guessed question (stamped `inferred`, "Not for me" link), Working ("<step> · step N of M", else "Working"), Resting (finished plan, else Haiku's `done` stamped `inferred`, else "Idle"). Primary row: "◎ <goal>" + "Details"/"Less"; open shows the Lane only (no "done when" in `FocusResult`). `overBudget(model)` exported for the tests. Setup rows brought over ("Coanda asks once"). Types: `BandButton.detail`, `BandAction 'dismiss'`, and `moment` on the `rows` model, made **required** (not optional), with one extra value `quiet` for the Primary-only idle stage. `register.tsx`: `dismiss` clears `asked`, `suggestions`, `moment`. Smoke run of 17 cases (scratchpad copy, `node --experimental-strip-types`): all as expected; `overBudget` caught a planted 2-button resting band.
 - **Keep files copied** from `mod-area/plugins/intent/` with new ids: plugin `coanda`, version 0.1.0, tool `mcp__coanda__ask_decision` (in `desktop.test.tsx`). `question.ts` lost `SOMETHING_ELSE` (v3 rule 3).
@@ -28,9 +31,13 @@ Run 13 Nov, 15:48, after `render.tsx`:
 - `claude plugin validate`: **passes with warnings** (no author, no icon). Directory-only: no LICENSE, refused for a directory submission, does not change the result.
 - `claude plugin test`: **passes**, 1 of 1 (15:55), after adding `on('session.id', () => ({ value: 's1' }))` to `hooks/desktop.test.tsx` (`snapshot()` now calls `$.session.id()`). `tsc` and `imports.check` rerun after it: still pass.
 
+Run 13 Nov, 16:00, after test part 1: `tsc` passes; `imports.check` all rules hold; `plugin validate` passes with warnings; `plugin test` **30 of 30 pass** (16 kept + 13 new + desktop).
+
+Run 13 Nov, 16:15, after test part 2: `tsc` passes; `imports.check` all rules hold; `plugin validate` passes with warnings; `plugin test` **53 of 53 pass** (52 in `coanda.test.tsx`, 1 in `desktop.test.tsx`).
+
 ## Next action
 
-Adapt the tests from `mod-area/plugins/intent/hooks/intent.test.tsx` (keep the pure and Setup tests, drop Mirror and 0.1.x store, rewrite the band tests for v3, use `overBudget`). Then Nicolas looks at the band on screen (needs install + `/reload-plugins`).
+Commit the tests (on Nicolas's yes). Then the first look on screen: install `coanda` (version bump, marketplace update, plugin update, `/reload-plugins`), Nicolas's step or Claude's on his yes. Then decide when a deferred card comes back.
 
 ## Plan for `band.ts` (worked out 13 Nov, 15:20, not written yet)
 
