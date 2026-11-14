@@ -6,6 +6,7 @@ import { proposalLane } from './goals-ask'
 import type { GoalsAsk } from './goals-ask'
 import { nudgeShows, nudgeText } from './standup'
 import { currentStep, lastOutcomeStep } from './plan'
+import { SHUTDOWN_FALLBACK, carriedStep, shutdownDue } from './shutdown'
 
 // The one function that decides what the band shows. Rebuilt 13 Nov 2026 from the v3 display rules
 // (docs/handover-coanda.md): weight follows the job, exceptions only, typing is the person's own
@@ -51,6 +52,9 @@ export function bandModel(s: Snapshot): BandModel {
 
     return { kind: 'rows', moment: 'guessed', heading: 'Question', rows: [row], primary }
   }
+
+  // Past the shutdown hour, once a day, a quiet turn shows the shutdown question in place of NOW.
+  if (!s.isWorking && shutdownDue(s.now, s.shutdown.doc, s.shutdown.forced)) return { kind: 'rows', moment: 'shutdown', heading: 'Shutdown', rows: [shutdownRow(s)], primary }
 
   // Working and Resting ask nothing, so with no Primary the band offers to set one: the step "Set your
   // Primary" (heading, field, "Set"), built from Nicolas's canvas of Sat 14 Nov. It is a step that needs
@@ -101,6 +105,30 @@ function cardRow(card: Card, waiting: number): BandRow {
 // A run longer than this shows the breathing circle beside the Working line.
 export const BREATHE_AFTER_MS = 30_000
 
+// SHUTDOWN: one question, one field with "Save" after it (Enter does the same), the quiet "Skip".
+// The placeholder is today's Primary; an empty answer is refused with a short muted note.
+function shutdownRow(s: Snapshot): BandRow {
+  const goal = goalOf(s)
+
+  return {
+    part: 'shutdown',
+    label: 'Shutdown',
+    text: ["What's tomorrow's first step?"],
+    inputs: [
+      {
+        key: 'shutdown-input',
+        kind: 'text',
+        value: s.shutdown.draft,
+        placeholder: goal === '' ? SHUTDOWN_FALLBACK : goal,
+        button: { key: 'shutdown-save', label: 'Save', action: { kind: 'shutdownSave' } },
+        action: { kind: 'shutdownType', value: '' },
+      },
+    ],
+    ...(s.shutdown.note === '' ? {} : { fieldNote: s.shutdown.note }),
+    buttons: [{ key: 'shutdown-skip', label: 'Skip', variant: 'link', action: { kind: 'shutdownSkip' } }],
+  }
+}
+
 // Working: one NOW line from the task list, a tool fact, so no stamp.
 function workingRow(s: Snapshot): BandRow {
   const steps = s.plan.steps
@@ -139,7 +167,7 @@ function goalOf(s: Snapshot): string {
 function primarySetRow(s: Snapshot): BandRow {
   return {
     part: 'primary',
-    text: s.focus.status === 'closed' || s.focus.status === 'unreadable' ? [primaryText(s.focus)] : [],
+    text: [...(s.focus.status === 'closed' || s.focus.status === 'unreadable' ? [primaryText(s.focus)] : []), ...fromLastNight(s)],
     inputs: [
       {
         key: 'primary-input',
@@ -154,16 +182,24 @@ function primarySetRow(s: Snapshot): BandRow {
   }
 }
 
+// Last night's answer to the shutdown question, on the next calendar day only, until a Primary is set.
+const fromLastNight = (s: Snapshot): string[] => {
+  const step = carriedStep(s.now, s.shutdown.doc)
+
+  return step === '' ? [] : [`◎ ${step} · first step, from last night`]
+}
+
 // The Primary row shows the goal only; "Details" opens the Lane (rule 6). FocusResult has no
 // "done when" line yet, so Details shows the Lane alone.
 function primaryRow(s: Snapshot): BandRow {
   // The file's Lanes when it has any, else the typed ones, never both.
   const lane = laneText(s.focus.lanes.length > 0 ? s.focus : { ...s.focus, lanes: s.setup.lanes }, s.now)
   const goal = goalOf(s)
+  const [carried = `◎ ${goal === '' ? primaryText(s.focus) : goal}`] = goal === '' ? fromLastNight(s) : []
 
   return {
     part: 'primary',
-    text: [`◎ ${goal === '' ? primaryText(s.focus) : goal}`, ...(s.detailsOpen ? [lane === '' ? 'No Lane set' : `Lane: ${lane}`] : [])],
+    text: [carried, ...(s.detailsOpen ? [lane === '' ? 'No Lane set' : `Lane: ${lane}`] : [])],
     buttons: [{ key: 'primary-details', label: s.detailsOpen ? 'Less' : 'Details', variant: 'link', action: { kind: 'details' } }],
   }
 }

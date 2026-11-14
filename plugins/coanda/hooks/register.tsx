@@ -11,6 +11,7 @@ import { questionToShow, toAsked } from './next'
 import type { PlanInput } from './plan'
 import { applyPlan, noteCall } from './plan'
 import { blankOf } from './question'
+import { checkShutdown } from './shutdown'
 import { dayKey } from './time'
 import { renderDemo, renderDemoOffer, renderDemoStrip } from './demo'
 import { addSample, backupFound, demoFolder, demoGoalsPath, resetDemo, restoreMine, startDemo, writeDemoGoals } from './demo-run'
@@ -75,6 +76,11 @@ import {
   getTypedPrimary,
   getWorkStart,
   updateWorkStart,
+  getShutdown,
+  getShutdownDraft,
+  getShutdownForced,
+  updateShutdownDraft,
+  updateShutdownForced,
   updateAsked,
   updateDetailsOpen,
   updateDoneLast,
@@ -93,7 +99,7 @@ import {
   updateSuggestions,
   NO_DRAFT,
 } from './state'
-import { NO_SETUP, addCard, closeCard, deferCard, finishSetup, loadSetup, loadTypedPrimary, readFocusSource, restore, setFocus, setTypedPrimary } from './store'
+import { NO_SETUP, addCard, closeCard, deferCard, finishSetup, loadSetup, loadShutdown, loadTypedPrimary, readFocusSource, restore, setFocus, setShutdown, setTypedPrimary } from './store'
 
 // The shell's wiring: one handler per host event, each a short run of named calls; snapshot()
 // gathers what the band reads; dispatch() is the only place a press is carried out.
@@ -209,6 +215,7 @@ async function snapshot($: State & Pick<EngineInterface, 'clock' | 'session' | '
     detailsOpen: await getDetailsOpen($),
     workingSince: await getWorkStart($),
     standup: await getStandup($),
+    shutdown: { doc: await getShutdown($), draft: (await getShutdownDraft($)).text, note: (await getShutdownDraft($)).note, forced: await getShutdownForced($) },
   }
 }
 
@@ -254,6 +261,28 @@ async function setPrimary($: Presser) {
   const now = await $.clock.now()
   await setTypedPrimary($, text, dayKey(now), now)
   await updateSetupDraft($, d => ({ ...d, primary: '' }))
+}
+
+// "Save": tomorrow's first step, kept with today's date. An empty answer is refused with a muted note.
+async function shutdownSave($: Presser) {
+  const checked = checkShutdown((await getShutdownDraft($)).text)
+  if (!checked.ok) return void (await updateShutdownDraft($, d => ({ ...d, note: checked.message })))
+
+  const now = await $.clock.now()
+  await setShutdown($, checked.value, dayKey(now), now)
+  await closeShutdown($)
+}
+
+// "Skip": nothing is written down, and the question does not come back today.
+async function shutdownSkip($: Presser) {
+  const now = await $.clock.now()
+  await setShutdown($, '', dayKey(now), now)
+  await closeShutdown($)
+}
+
+async function closeShutdown($: Presser) {
+  await updateShutdownDraft($, () => ({ text: '', note: '' }))
+  await updateShutdownForced($, () => false)
 }
 
 // Setup is over: it stays closed. Used by "Looks right" and "Skip for now".
@@ -337,6 +366,14 @@ async function dispatch($: Presser, action: BandAction): Promise<void> {
       await updateSetupDraft($, d => ({ ...d, [action.field]: action.value }))
       if (action.submit) await setPrimary($)
       return
+    case 'shutdownType':
+      await updateShutdownDraft($, () => ({ text: action.value, note: '' }))
+      if (action.submit) await shutdownSave($)
+      return
+    case 'shutdownSave':
+      return shutdownSave($)
+    case 'shutdownSkip':
+      return shutdownSkip($)
     case 'primarySet':
       return setPrimary($)
     case 'demoFile':
@@ -369,11 +406,13 @@ export const register: Register = on => {
     await loadTypedPrimary($)
     // Claude closed in the middle of a demo: the person's data is in the backup until it is restored.
     if ((await getDemoMode($)) === 'off' && (await backupFound($))) $.ui.toast('Your Coanda data is saved from a demo. Run /coanda-demo to restore it.')
+    await loadShutdown($)
     await refreshFocus($)
     $.clock.every(60000, () => void refreshFocus($))
     await $.command.register({ name: 'coanda-setup', description: "Open Coanda's Setup at step 1: your goals file and your Lanes" })
     await $.command.register({ name: 'coanda-specimen', description: 'Show or hide every drawing option of the band (for design checks)' })
     await $.command.register({ name: 'coanda-demo', description: 'Walk through every screen of the band with example data, to correct each one live' })
+    await $.command.register({ name: 'coanda-shutdown', description: "Show the shutdown question now, whatever the hour (for checking it)" })
     await $.command.register({ name: 'coanda-grid', description: 'Show or hide the grid page: rulers in cells, spacing steps, text sizes, contrast (for design checks)' })
 
     // A reload at the end of a turn loses its turn.complete: read the answer kept while it was written.
@@ -530,6 +569,15 @@ export const register: Register = on => {
     $.ui.invalidate('ui.render')
 
     return { text: 'Demo on: Setup starts from zero. Your own data is saved and comes back when you exit the demo.' }
+  })
+
+  // /coanda-shutdown: the shutdown question shows now, whatever the hour or the day's answer, until Save or Skip.
+  on('command.run', { command: 'coanda-shutdown' }, async $ => {
+    await updateShutdownDraft($, () => ({ text: '', note: '' }))
+    await updateShutdownForced($, () => true)
+    $.ui.invalidate('ui.render')
+
+    return { text: 'The shutdown question is open above the prompt (it shows when no turn is running).' }
   })
 
   // /coanda-specimen: a design check, on or off. While on, the band draws the specimen only.

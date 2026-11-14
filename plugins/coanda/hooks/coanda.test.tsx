@@ -12,6 +12,7 @@ import { claudeConfigDir } from './io'
 import { parseNext, parseSuggestions, questionToShow, toAsked } from './next'
 import { applyPlan, lastOutcomeStep, noteCall } from './plan'
 import { blankOf } from './question'
+import { SHUTDOWN_FALLBACK, carriedStep, checkShutdown, nextDay, shutdownDue } from './shutdown'
 import { clockTime, dayKey } from './time'
 import { BREAK_MS, FAST_CHECK, LONG_MS, NO_STANDUP, RUNS, noteRun, nudgeShows } from './standup'
 
@@ -232,6 +233,7 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
   detailsOpen: false,
   workingSince: null,
   standup: { streak: 0, lastEndAt: 0 },
+  shutdown: { doc: null, draft: '', note: '', forced: false },
   ...over,
 })
 
@@ -912,7 +914,7 @@ test('Setup: with no home directory nothing is read and it says nothing was foun
 test('/coanda-setup opens Setup again with the goals file read afresh; "Looks right" closes it', async ($, on) => {
   const { ui, commands, saved } = await bandOver($, on, { setup: SETUP_FILE('/data/goals.md'), files: { '/data/goals.md': GOALS_TEXT }, env: { HOME: '/home/n' } })
 
-  expect(commands).toEqual(['coanda-setup', 'coanda-specimen', 'coanda-demo', 'coanda-grid'])
+  expect(commands).toEqual(['coanda-setup', 'coanda-specimen', 'coanda-demo', 'coanda-shutdown', 'coanda-grid'])
   expect(await primaryOf(ui)).toBe('◎ Ship the v0.1 install')
   await $.command.run({ command: 'coanda-setup' } as never)
   expect(await texts(ui)).toContain('SET UP YOUR GOALS')
@@ -1694,5 +1696,111 @@ test('stand-up on screen: 3 long runs show the line; "Not now" hides it and the 
   expect(await line()).toBeDefined()
   await clock!.advance(BREAK_MS + 1)
   expect(await line()).toBeUndefined()
+  await ui.unmount()
+})
+
+// ---- The shutdown question: after 18:30, once a day, tomorrow's first step ----------------------
+
+const EVENING = new Date(2026, 10, 14, 18, 30).getTime() // Sat 14 Nov 2026, 18:30 local
+const BEFORE = new Date(2026, 10, 14, 18, 29).getTime()
+const MORNING = new Date(2026, 10, 15, 8, 30).getTime()
+const ASKED = { v: 1 as const, day: '2026-11-14', text: 'Answer R4 of the CEO review', setAt: EVENING }
+
+test('shutdown: shows from 18:30 on, not before, and only once a day (a skip counts too)', () => {
+  expect(shutdownDue(BEFORE, null, false)).toBe(false)
+  expect(shutdownDue(EVENING, null, false)).toBe(true)
+  expect(shutdownDue(EVENING, { ...ASKED, text: '' }, false)).toBe(false)
+  expect(shutdownDue(EVENING, ASKED, false)).toBe(false)
+  // Yesterday's answer does not count for today; /coanda-shutdown forces it at any hour.
+  expect(shutdownDue(EVENING, { ...ASKED, day: '2026-11-13' }, false)).toBe(true)
+  expect(shutdownDue(BEFORE, ASKED, true)).toBe(true)
+
+  expect(rowsOf(bandModel(snap({ now: BEFORE }))).moment).toBe('resting')
+  const row = only(bandModel(snap({ now: EVENING })))
+  expect(rowsOf(bandModel(snap({ now: EVENING }))).moment).toBe('shutdown')
+  expect(row).toMatchObject({ part: 'shutdown', label: 'Shutdown', text: ["What's tomorrow's first step?"] })
+  expect(row.inputs?.map(one => [one.key, one.placeholder, one.button?.label])).toEqual([['shutdown-input', 'Ship the v0.1 install', 'Save']])
+  expect(labels(row)).toEqual(['~Skip'])
+  expect(rowsOf(bandModel(snap({ now: EVENING }))).primary?.text).toEqual(['◎ Ship the v0.1 install'])
+  // The same hour with the answer stored: the usual band.
+  expect(rowsOf(bandModel(snap({ now: EVENING, shutdown: { doc: ASKED, draft: '', note: '', forced: false } }))).moment).toBe('resting')
+})
+
+test('shutdown: waits for a quiet turn; placeholder falls back; every state is within the budget', () => {
+  const none = { focus: { status: 'none' as const, primary: '', laneId: '', lanes: [] } }
+  expect(rowsOf(bandModel(snap({ now: EVENING, isWorking: true }))).moment).toBe('working')
+  expect(rowsOf(bandModel(snap({ now: EVENING, cards: [cardOf('c1')] }))).moment).toBe('pick')
+  expect(only(bandModel(snap({ now: EVENING, ...none }))).inputs?.[0]?.placeholder).toBe(SHUTDOWN_FALLBACK)
+  for (const one of [snap({ now: EVENING }), snap({ now: EVENING, ...none }), snap({ now: EVENING, shutdown: { doc: null, draft: 'x', note: 'Write one step first, or skip.', forced: false } })])
+    expect(overBudget(bandModel(one))).toEqual([])
+  expect(only(bandModel(snap({ now: EVENING, shutdown: { doc: null, draft: '', note: 'Write one step first, or skip.', forced: false } }))).fieldNote).toBe('Write one step first, or skip.')
+})
+
+test('shutdown: an empty answer is refused, the rest is one short line', () => {
+  expect(checkShutdown('   ')).toEqual({ ok: false, message: 'Write one step first, or skip.' })
+  expect(checkShutdown('  Answer   R4\n of the review ')).toEqual({ ok: true, value: 'Answer R4 of the review' })
+  expect(checkShutdown('x'.repeat(300))).toMatchObject({ ok: true })
+})
+
+test('shutdown: shows the next calendar day only, in the Primary area, until a Primary is set', () => {
+  expect(nextDay('2026-11-30')).toBe('2026-12-01')
+  expect(nextDay('2026-12-31')).toBe('2027-01-01')
+  expect(carriedStep(MORNING, ASKED)).toBe('Answer R4 of the CEO review')
+  expect(carriedStep(MORNING, { ...ASKED, text: '' })).toBe('')
+  expect(carriedStep(EVENING, ASKED)).toBe('')
+  expect(carriedStep(new Date(2026, 10, 16, 8, 30).getTime(), ASKED)).toBe('')
+
+  const none = { focus: { status: 'none' as const, primary: '', laneId: '', lanes: [] } }
+  const carried = '◎ Answer R4 of the CEO review · first step, from last night'
+  const shutdown = { doc: ASKED, draft: '', note: '', forced: false }
+  // No Primary yet: the line sits in the "Set your Primary" step (Resting) and replaces "no Primary set" (Primary row alone).
+  expect(rowsOf(bandModel(snap({ now: MORNING, shutdown, ...none }))).rows[0]?.text).toEqual([carried])
+  expect(rowsOf(bandModel(snap({ now: MORNING, shutdown, ...none, cards: [cardOf('c1')] }))).primary?.text).toEqual([carried])
+  // A Primary for the day (file or typed) wins.
+  expect(rowsOf(bandModel(snap({ now: MORNING, shutdown }))).primary?.text).toEqual(['◎ Ship the v0.1 install'])
+})
+
+test('shutdown: the question appears at 18:30, an empty Save is refused, Save keeps it, tomorrow it shows', async ($, on) => {
+  const { ui, saved, clock } = await bandOver($, on, { ...READY_SETUP, now: BEFORE })
+
+  expect(await texts(ui)).not.toContain('SHUTDOWN')
+  await clock!.advance(60_000)
+  expect(await texts(ui)).toContain('SHUTDOWN')
+  expect(await texts(ui)).toContain("What's tomorrow's first step?")
+
+  await ui.press({ key: 'shutdown-save' })
+  expect(saved.shutdown).toBeUndefined()
+  expect(await texts(ui)).toContain('Write one step first, or skip.')
+
+  await ui.input({ key: 'shutdown-input', text: '  Answer R4  ', kind: 'submit' })
+  expect(saved.shutdown).toMatchObject({ v: 1, day: '2026-11-14', text: 'Answer R4' })
+  expect(await texts(ui)).not.toContain('SHUTDOWN')
+
+  // Once per day: still no question later that evening.
+  await clock!.advance(3600_000)
+  expect(await texts(ui)).not.toContain('SHUTDOWN')
+
+  // Next morning: the first step shows where the Primary goes, until one is set.
+  await clock!.advance(13 * 3600_000)
+  expect(await primaryOf(ui)).toBe('◎ Answer R4 · first step, from last night')
+  await ui.input({ key: 'primary-input', text: 'Write the tests', kind: 'submit' })
+  expect(await primaryOf(ui)).toBe('◎ Write the tests')
+  await ui.unmount()
+})
+
+test('shutdown: Skip writes nothing down and the question stays away for the day; /coanda-shutdown shows it now', async ($, on) => {
+  const { ui, saved } = await bandOver($, on, { ...READY_SETUP, now: EVENING })
+
+  expect(await texts(ui)).toContain('SHUTDOWN')
+  await ui.press({ key: 'shutdown-skip' })
+  expect(saved.shutdown).toMatchObject({ day: '2026-11-14', text: '' })
+  expect(await texts(ui)).not.toContain('SHUTDOWN')
+  // Skipped, so nothing shows tomorrow.
+  expect(carriedStep(MORNING, saved.shutdown as typeof ASKED)).toBe('')
+
+  await $.command.run({ command: 'coanda-shutdown' } as never)
+  expect(await texts(ui)).toContain('SHUTDOWN')
+  await ui.press({ key: 'shutdown-skip' })
+  expect(await texts(ui)).not.toContain('SHUTDOWN')
   await ui.unmount()
 })

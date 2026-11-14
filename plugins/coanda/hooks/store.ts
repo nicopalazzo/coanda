@@ -1,9 +1,9 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { Card, DecisionStatus, Setup, TypedPrimary } from '../types'
+import type { Card, DecisionStatus, Setup, ShutdownDoc, TypedPrimary } from '../types'
 import { close, supersede, toBottom } from './cards'
 import { focusSourceOf, toSetup } from './focus'
-import { getCards, updateCards, updateSetupSeen, updateTypedPrimary } from './state'
+import { getCards, updateCards, updateSetupSeen, updateShutdown, updateTypedPrimary } from './state'
 
 // What the person keeps across sessions lives in $.store: the setup and the decision cards.
 // Each document carries `v: 1`. The store starts empty: nothing from an older plugin is read.
@@ -109,4 +109,25 @@ export async function setTypedPrimary($: Keeper, text: string, day: string, setA
   const doc: TypedPrimary = { v: 1, day, text, setAt }
   await $.store.set('primary', doc)
   await updateTypedPrimary($, () => doc)
+}
+
+// The shutdown answer: one document `{ v: 1, day, text, setAt }`, replaced each evening; `text: ''`
+// means skipped. Read at session start.
+const isShutdown = (one: unknown): one is ShutdownDoc => {
+  const doc = one as ShutdownDoc | null
+  return doc?.v === 1 && typeof doc.day === 'string' && typeof doc.text === 'string' && typeof doc.setAt === 'number'
+}
+
+export async function loadShutdown($: Keeper): Promise<ShutdownDoc | null> {
+  const raw = await $.store.get('shutdown')
+  const found = isShutdown(raw) ? raw : null
+  await updateShutdown($, () => found)
+
+  return found
+}
+
+export async function setShutdown($: Keeper, text: string, day: string, setAt: number) {
+  const doc: ShutdownDoc = { v: 1, day, text, setAt }
+  await $.store.set('shutdown', doc)
+  await updateShutdown($, () => doc)
 }

@@ -125,7 +125,7 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
       )
     }
 
-    const isQuestion = r.part === 'question' || r.part === 'setup' || r.part === 'primary'
+    const isQuestion = r.part === 'question' || r.part === 'setup' || r.part === 'primary' || r.part === 'shutdown'
 
     return isQuestion ? (
       <Text weight="semibold" color={INK} wrap="wrap">
@@ -191,6 +191,11 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
             </Text>
           ))}
           {(r.inputs ?? []).map(one => field(one, one.key === firstField?.key))}
+          {r.fieldNote !== undefined && (
+            <Text size="caption" color={MUTED} wrap="wrap">
+              {r.fieldNote}
+            </Text>
+          )}
           {(r.note === undefined ? r.buttons : r.buttons.filter(b => b.variant !== 'link')).length > 0 && (
             <Box flexDirection="row" flexWrap="wrap" alignItems="flex-start" gap={1}>
               {(r.note === undefined ? r.buttons : r.buttons.filter(b => b.variant !== 'link')).map(answer)}
@@ -324,6 +329,12 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
         // The field takes 2 rows; a button beside it starts on the second and is 1.4 rows tall, so it needs a third (seen 14 Nov 16:58: Set was cut off by the stage's edge).
         y += one.button === undefined ? 2 : 3
       })
+
+      // A muted note under the field (the shutdown question's refusal of an empty answer).
+      if (r.fieldNote !== undefined) {
+        items.push({ key: `row-${i}-note`, y, x: INSET, width: inner, node: <Text color={MUTED} wrap="truncate-end">{r.fieldNote}</Text> })
+        y += 1
+      }
 
       // With a note the quiet link is drawn on the note's line.
       const rowButtons = r.note === undefined ? r.buttons : r.buttons.filter(b => b.variant !== 'link')

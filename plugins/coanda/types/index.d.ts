@@ -96,6 +96,10 @@ export type SetupDraft = { primary: string }
 export type GoalsProposal = { goal: string; lanes: { name: string; outcome: string; by: string }[] }
 // The Primary typed in the band, kept for the day it was set (`day`: dayKey, the machine's own time zone).
 export type TypedPrimary = { v: 1; day: string; text: string; setAt: number }
+// The shutdown answer: `day` is the day it was asked; `text` is '' when skipped. One document, replaced each evening.
+export type ShutdownDoc = { v: 1; day: string; text: string; setAt: number }
+// What the band reads of it: the stored answer, the typed draft with its note, and whether /coanda-shutdown forced the row.
+export type ShutdownState = { doc: ShutdownDoc | null; draft: string; note: string; forced: boolean }
 export type DayEntry = { id: string; text: string; laneId: string; laneOutcome: string; sessionId: string; setAt: number; doneAt?: number; switchedAt?: number }
 // The stand-up nudge's log: long runs in a row, and when the last run ended (hooks/standup.ts).
 export type Standup = { streak: number; lastEndAt: number }
@@ -133,6 +137,7 @@ export type Snapshot = {
   // When this run started (ms), or null when unknown: Working breathes after 30 s of it.
   workingSince: number | null
   standup: Standup
+  shutdown: ShutdownState
 }
 
 // A press is data; dispatch() in register.tsx is the only place one is carried out.
@@ -154,11 +159,14 @@ export type BandAction =
   | { kind: 'goalsProposal'; what: 'save' | 'revise' | 'drop' }
   | { kind: 'goalsKeep' } // "Looks right": the goals file found is kept as the goals file, Setup is finished
   | { kind: 'setupSkip' } // "Skip for now": Setup is finished without keeping anything
+  | { kind: 'shutdownType'; value: string; submit?: true } // the SHUTDOWN field; `submit` is Enter
+  | { kind: 'shutdownSave' } // "Save": tomorrow's first step
+  | { kind: 'shutdownSkip' } // the quiet exit: nothing asked again today
 // 'link' is the one quiet exit, drawn as a text link (v3 rule 4). `detail` is the second line under
 // an answer: what follows from it (an option's consequence).
 export type BandButton = { key: string; label: string; variant?: 'primary' | 'secondary' | 'plain' | 'link'; detail?: string; action: BandAction }
 // Which v3 moment a 'rows' model is, so tests and render can tell without reading the rows.
-export type BandMoment = 'sent' | 'pick' | 'guessed' | 'working' | 'resting' | 'quiet'
+export type BandMoment = 'sent' | 'pick' | 'guessed' | 'working' | 'resting' | 'quiet' | 'shutdown'
 export type BandModel =
   | { kind: 'hidden' }
   // Setup is one step with a heading (D4): what it finds in the goals file, drawn on the placed grid.
@@ -169,7 +177,7 @@ export type BandModel =
   | { kind: 'rows'; moment: BandMoment; rows: BandRow[]; primary?: BandRow; heading?: string }
 // `source` is set only when the row is not a tool fact; `chip` only when hard to undo (v3 rule 2).
 export type BandRow = {
-  part: PartId | 'setup' | 'sent'
+  part: PartId | 'setup' | 'sent' | 'shutdown'
   label?: string
   text: string[]
   note?: string // one quiet muted line beside the row's quiet link (the stand-up nudge)
@@ -177,6 +185,7 @@ export type BandRow = {
   chip?: 'Hard to undo'
   // Working only: show the breathing circle and its caption beside the line.
   breathe?: true
+  fieldNote?: string // a short muted line under a field (the shutdown question's refusal)
   inputs?: BandInput[]
   buttons: BandButton[]
 }
@@ -206,6 +215,9 @@ declare module 'claude-code' {
       detailsOpen: boolean
       typedPrimary: TypedPrimary | null
       workStart: number | null
+      shutdown: ShutdownDoc | null
+      shutdownDraft: { text: string; note: string }
+      shutdownForced: boolean
       specimen: boolean
       demo: number | null
       demoMode: 'off' | 'on' | 'offer'
