@@ -91,7 +91,9 @@ export type Setup = {
 export type Cards = { v: 1; items: Card[] }
 // What the person has typed in the Setup moment and not yet kept, and what the last press said back.
 // Lives in $.state so a redraw keeps the text.
-export type SetupDraft = { file: string; lane: string; end: string; primary: string; fileNote: string; laneNote: string }
+export type SetupDraft = { primary: string }
+// What Claude proposes through `propose_goals`, shown in Setup stamped "inferred" until the person saves or drops it.
+export type GoalsProposal = { goal: string; lanes: { name: string; outcome: string; by: string }[] }
 // The Primary typed in the band, kept for the day it was set (`day`: dayKey, the machine's own time zone).
 export type TypedPrimary = { v: 1; day: string; text: string; setAt: number }
 export type DayEntry = { id: string; text: string; laneId: string; laneOutcome: string; sessionId: string; setAt: number; doneAt?: number; switchedAt?: number }
@@ -105,9 +107,14 @@ export type Snapshot = {
   isWorking: boolean
   setup: Setup
   setupOpen: boolean
-  setupStep: number
   setupDraft: SetupDraft
   focus: FocusResult
+  // Where Setup looks for the goals (the saved path, else ~/.claude/goals.md; the demo's file in the demo).
+  goalsPath: string
+  // Setup has asked Claude (a message sent from the band) and waits for the goals file to fill.
+  goalsAsking: boolean
+  // Claude's proposal for the goals file (propose_goals), not saved yet; null when none.
+  goalsProposal: GoalsProposal | null
   sessionPrimary: SessionPrimary
   cards: Card[]
   asked: Asked | null
@@ -119,6 +126,8 @@ export type Snapshot = {
   lastActivity: number
   shelfInstalled: boolean
   detailsOpen: boolean
+  // While /coanda-demo runs: the demo goals file Setup proposes instead of asking for a path.
+  demoGoals?: string
 }
 
 // A press is data; dispatch() in register.tsx is the only place one is carried out.
@@ -130,12 +139,15 @@ export type BandAction =
   | { kind: 'dismiss' } // "Not for me" on a guessed question: the guess is dropped, nothing is sent
   | { kind: 'details' } // the Primary row's "Details": the "done when" line and the Lane
   // The Setup moment. `value` is what the field holds; `submit` is Enter in the field.
-  | { kind: 'setupType'; field: 'file' | 'lane' | 'end' | 'primary'; value: string; submit?: true }
+  | { kind: 'setupType'; field: 'primary'; value: string; submit?: true }
   | { kind: 'primarySet' } // "Set" after the Primary field: today's Primary, typed in the band
-  | { kind: 'setupFile' } // "Use this file"
-  | { kind: 'setupAddLane' } // "Add Lane"
-  | { kind: 'setupRemoveLane'; laneId: string }
-  | { kind: 'setupNext' } // "Skip" / "Done": the next step, or finish after the last
+  | { kind: 'demoFile' } // the demo: create the demo goals file and keep it as the goals file
+  // A message from the band to Claude about the goals file: set it up, find the goals in my files, change them, or fix an unreadable file.
+  | { kind: 'goalsAsk'; ask: 'setup' | 'find' | 'change' | 'fix' }
+  // The proposal Setup shows: save it (Claude writes the file), change it (talk it over), or drop it.
+  | { kind: 'goalsProposal'; what: 'save' | 'revise' | 'drop' }
+  | { kind: 'goalsKeep' } // "Looks right": the goals file found is kept as the goals file, Setup is finished
+  | { kind: 'setupSkip' } // "Skip for now": Setup is finished without keeping anything
 // 'link' is the one quiet exit, drawn as a text link (v3 rule 4). `detail` is the second line under
 // an answer: what follows from it (an option's consequence).
 export type BandButton = { key: string; label: string; variant?: 'primary' | 'secondary' | 'plain' | 'link'; detail?: string; action: BandAction }
@@ -143,9 +155,12 @@ export type BandButton = { key: string; label: string; variant?: 'primary' | 'se
 export type BandMoment = 'sent' | 'pick' | 'guessed' | 'working' | 'resting' | 'quiet'
 export type BandModel =
   | { kind: 'hidden' }
-  | { kind: 'setup'; step: number; rows: BandRow[] }
+  // Setup is one step with a heading (D4): what it finds in the goals file, drawn on the placed grid.
+  | { kind: 'setup'; heading: string; rows: BandRow[] }
   | { kind: 'gate'; buttons: BandButton[] }
-  | { kind: 'rows'; moment: BandMoment; rows: BandRow[]; primary?: BandRow }
+  // `heading`: the name of a step that needs the person, drawn bold on its own row above the frame
+  // (band-rebuild-plan.md, D4); none for the always-there area.
+  | { kind: 'rows'; moment: BandMoment; rows: BandRow[]; primary?: BandRow; heading?: string }
 // `source` is set only when the row is not a tool fact; `chip` only when hard to undo (v3 rule 2).
 export type BandRow = {
   part: PartId | 'setup' | 'sent'
@@ -176,11 +191,14 @@ declare module 'claude-code' {
       lastPrompt: string
       setupSeen: Setup | null
       setupOpen: boolean
-      setupStep: number
       setupDraft: SetupDraft
+      goalsAsking: boolean
+      goalsProposal: GoalsProposal | null
       detailsOpen: boolean
       typedPrimary: TypedPrimary | null
       specimen: boolean
+      demo: number | null
+      demoMode: 'off' | 'on' | 'offer'
       grid: boolean
       lab: boolean
       labPresses: number

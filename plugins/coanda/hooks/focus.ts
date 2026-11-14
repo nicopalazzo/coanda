@@ -196,58 +196,19 @@ export function laneText(focus: FocusResult, now?: number): string {
 }
 
 // ---------------------------------------------------------------------------------------------
-// What the person types in the Setup moment (spine AD-4, AD-5). Pure: the home directory, the id
-// and the time come in as arguments. A refusal is a plain message, never an exception.
+// The Setup moment reads the goals file; it asks the person for nothing (band-rebuild-plan.md, D2, D3).
 // ---------------------------------------------------------------------------------------------
-export type Checked<T> = { ok: true; value: T } | { ok: false; message: string }
-
 export const MAX_LANES = 3
-const MAX_TYPED_LANE = 100
-const refuse = (message: string): { ok: false; message: string } => ({ ok: false, message })
 
-// The Focus source as typed: `~/…` is expanded once, here, and stored absolute; a full path is kept;
-// any other relative path is refused (it would mean a different file in every folder).
-export function checkFocusPath(typed: string, home: string | null): Checked<string> {
-  const path = typed.trim()
+// What Setup finds in the goals file: goals to confirm, nothing yet, or a file it cannot read.
+// A Primary or at least one Lane counts as goals; a closed Primary with no Lane does not.
+export type GoalsState = 'found' | 'nothing' | 'unreadable'
 
-  if (path === '') return refuse('Type the path of your goals file, or skip this step.')
-  if (path.startsWith('~/') && path.length > 2) {
-    return home === null ? refuse('Cannot find your home folder: type the full path, starting with /.') : { ok: true, value: `${home.replace(/\/+$/, '')}/${path.slice(2)}` }
-  }
-  if (path.startsWith('/')) return { ok: true, value: path }
+export function goalsState(focus: FocusResult): GoalsState {
+  if (focus.status === 'unreadable') return 'unreadable'
 
-  return refuse(`"${clip(path, 40)}" is a relative path. Type the full path, starting with / or ~/.`)
+  return focus.status === 'ok' || focus.lanes.length > 0 ? 'found' : 'nothing'
 }
-
-// A day typed as YYYY-MM-DD is kept as a day; any other text is kept as text and never marked past.
-function endOf(typed: string): Pick<Lane, 'endDay' | 'endText'> {
-  const text = typed.trim()
-  if (text === '') return {}
-
-  const found = text.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  const day = found === null ? null : new Date(Date.UTC(Number(found[1]), Number(found[2]) - 1, Number(found[3])))
-  const isDay = found !== null && day !== null && day.toISOString().startsWith(text)
-
-  return isDay ? { endDay: text } : { endText: clip(text, 30) }
-}
-
-// A Lane is an outcome, not a label: "Lane 2" or "Proof" alone are refused with a hint (spine AD-5).
-// The same validator will check a typed Primary's title (card 2.5).
-export function checkLane(typed: string, endTyped: string, id: string, kept: Lane[]): Checked<Lane> {
-  const text = clip(typed, MAX_TYPED_LANE)
-  const rest = text.replace(/^lane\s*\d+\s*[:\-—–]?\s*/i, '')
-
-  if (kept.length >= MAX_LANES) return refuse(`${MAX_LANES} Lanes is the most. Remove one first.`)
-  if (text === '') return refuse('Write the outcome of this Lane, for example "portfolio live".')
-  if (rest.split(/\s+/).filter(word => /[\p{L}\p{N}]/u.test(word)).length < 2) {
-    return refuse(`"${text}" is a label, not an outcome. Write what it should achieve, for example "portfolio live". The end date goes in its own field.`)
-  }
-
-  return { ok: true, value: { id, outcome: text, ...endOf(endTyped) } }
-}
-
-// An id for a typed Lane, made once from the clock and a random number; never renumbered or reused.
-export const newLaneId = (now: number, random: number): string => `own-${now.toString(36)}${Math.floor(random * 1e6).toString(36)}`
 
 // The saved setup document, held to its shape; null when there is nothing usable (then the person has not been asked).
 export function toSetup(raw: unknown): Setup | null {

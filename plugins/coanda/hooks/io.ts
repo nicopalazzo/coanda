@@ -37,3 +37,8 @@ export async function claudeConfigDir($: Places): Promise<string> {
 export async function readFocusFile($: Files, path: string): Promise<string> {
   return String(await $.fs.read(path))
 }
+
+// Where the person's goals live (band-rebuild-plan.md, D3): one file, found in every project.
+export async function goalsFile($: Places): Promise<string> {
+  return `${await claudeConfigDir($)}/goals.md`
+}

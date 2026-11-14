@@ -12,8 +12,8 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 
 // Pure files: no host calls, no clock, no files.
-const CORE = ['band', 'focus', 'idle', 'time', 'cards', 'plan', 'next', 'question', 'line']
-const SHELL = ['register', 'render', 'grid', 'lab', 'lab-client', 'light', 'stage', 'lamp', 'state', 'store', 'io', 'model']
+const CORE = ['band', 'focus', 'idle', 'time', 'cards', 'plan', 'next', 'question', 'line', 'goals-ask']
+const SHELL = ['register', 'render', 'grid', 'lab', 'lab-client', 'light', 'stage', 'lamp', 'state', 'store', 'io', 'model', 'demo-run']
 
 const sources = Object.fromEntries(
   readdirSync(here)

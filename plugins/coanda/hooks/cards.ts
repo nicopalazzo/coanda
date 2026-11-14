@@ -112,7 +112,7 @@ export const ASK_DECISION = {
           type: 'object',
           properties: {
             label: { type: 'string', description: 'A few words naming the choice' },
-            consequence: { type: 'string', description: 'What happens next if the user picks it, one short line' },
+            consequence: { type: 'string', description: 'What happens next if the user picks it, one short plain sentence that names the effect, like "Changes 2 files" or "Changes no file"' },
           },
           required: ['label', 'consequence'],
         },

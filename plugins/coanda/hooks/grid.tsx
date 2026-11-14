@@ -44,7 +44,9 @@ export const CONTRASTS: ReadonlyArray<readonly [string, string, string, string]>
 ]
 
 export function renderGrid(draw: Draw): JSX.Element {
-  const { Box, Text } = draw.ui
+  const { Box, Text, Button } = draw.ui
+  const Input = 'Input' in draw.ui ? draw.ui.Input : undefined
+  const noop = () => undefined
   const cols = draw.columns
   const tag = (t: string) => (
     <Text size="caption" mono color={MUTED}>
@@ -69,6 +71,56 @@ export function renderGrid(draw: Draw): JSX.Element {
     <Box flexDirection="column" gap="md" width={cols} borderStyle="round" borderColor={INK} paddingX="md" paddingY="sm">
       <Text weight="semibold">COANDA GRID · run /coanda-grid again to hide</Text>
       {tag(`Band width reported by the host: ${cols} cells. Frame: round border + paddingX md.`)}
+
+      {tag('M · THE FIRST MEASURE (band-rebuild-plan.md, section 6, step 0). Judge each in light AND dark mode.')}
+      {item(
+        'M1 to M4: a heading placed over the frame\'s top line (Dusk text, our font). top 0 or -1; with no background or a white one. Does the line show through the text? Does a white patch show in dark mode?',
+        <Box flexDirection="column" gap="md">
+          {(
+            [
+              ['M1 top 0, no background', 0, undefined],
+              ['M2 top -1, no background', -1, undefined],
+              ['M3 top 0, white background', 0, '#FFFFFF'],
+              ['M4 top -1, white background', -1, '#FFFFFF'],
+            ] as const
+          ).map(([name, top, bg]) => (
+            <Box key={name} position="relative" flexDirection="column" borderStyle="round" paddingX={1} width={cols - 8} minWidth={0}>
+              <Box key={`${name}-h`} position="absolute" top={top} left={2} paddingX={1} {...(bg === undefined ? {} : { backgroundColor: bg })}>
+                <Text size="caption" color={DUSK}>
+                  {`SET YOUR PRIMARY · ${name}`}
+                </Text>
+              </Box>
+              <Text>content line under the heading</Text>
+            </Box>
+          ))}
+        </Box>,
+      )}
+      {item(
+        'F1 (0.1.17, column wrapper) a 2-row field in a 74-cell box, a gap of 1, then Set. Does the field fill 74 cells? Where does Set sit (top, middle)?',
+        <Box flexDirection="column">
+          <Text mono>{ruler(cols - 8)}</Text>
+          <Box flexDirection="row" gap={1} alignItems="flex-start">
+            <Box width={74} flexShrink={0} flexDirection="column">
+              {Input === undefined ? <Text>no Input here</Text> : <Input key="f1" rows={2} placeholder="The one thing today…" onSubmit={noop} />}
+            </Box>
+            <Button key="f1-set" variant="primary" label="Set" onPress={noop} />
+          </Box>
+        </Box>,
+      )}
+      {item(
+        'F2 two 2-row fields side by side, 44 and 24 cells, a gap of 1 (the Lanes sketch). Do both fill their boxes?',
+        <Box flexDirection="column">
+          <Text mono>{ruler(cols - 8)}</Text>
+          <Box flexDirection="row" gap={1} alignItems="flex-start">
+            <Box width={44} flexShrink={0} flexDirection="column">
+              {Input === undefined ? <Text>no Input here</Text> : <Input key="f2a" rows={2} placeholder="Outcome" onSubmit={noop} />}
+            </Box>
+            <Box width={24} flexShrink={0} flexDirection="column">
+              {Input === undefined ? <Text>no Input here</Text> : <Input key="f2b" rows={2} placeholder="End date" onSubmit={noop} />}
+            </Box>
+          </Box>
+        </Box>,
+      )}
 
       {tag('H · HORIZONTAL (cells)')}
       {item(

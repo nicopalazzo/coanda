@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { StateDollar } from 'claude-code'
 
-import type { Asked, Card, FocusResult, Moment, Pending, Setup, SetupDraft, Step, Suggestion, TypedPrimary } from '../types'
+import type { Asked, Card, FocusResult, GoalsProposal, Moment, Pending, Setup, SetupDraft, Step, Suggestion, TypedPrimary } from '../types'
 
 // Every atom of the mod lives here: this session's values, kept in $.state.
 //
@@ -11,7 +11,7 @@ import type { Asked, Card, FocusResult, Moment, Pending, Setup, SetupDraft, Step
 // read() or update().
 
 // What is typed in the Setup moment and not yet kept, so a redraw keeps the text.
-export const NO_DRAFT: SetupDraft = { file: '', lane: '', end: '', primary: '', fileNote: '', laneNote: '' }
+export const NO_DRAFT: SetupDraft = { primary: '' }
 
 const cards = atom({ plugin: 'coanda', key: 'cards' } as const, [] as Card[])
 // What the Focus source says, as the parser returned it; only the tick writes it.
@@ -32,15 +32,23 @@ const pending = atom({ plugin: 'coanda', key: 'pending' } as const, null as Pend
 const sent = atom({ plugin: 'coanda', key: 'sent' } as const, null as string | null)
 // The saved setup as this session last read or wrote it (store.ts is the only writer); null until read.
 const setupSeen = atom({ plugin: 'coanda', key: 'setupSeen' } as const, null as Setup | null)
-// Whether the Setup moment was reopened, and the step it shows (dispatch writes both).
+// Whether the Setup moment was reopened (dispatch writes it).
 const setupOpen = atom({ plugin: 'coanda', key: 'setupOpen' } as const, false)
-const setupStep = atom({ plugin: 'coanda', key: 'setupStep' } as const, 0)
 const setupDraft = atom({ plugin: 'coanda', key: 'setupDraft' } as const, NO_DRAFT)
 // Whether the Primary row's Details (the "done when" line and the Lane) is open.
+// Setup has sent Claude a message about the goals file and waits for the file to fill (state 1, "Asking Claude").
+const goalsAsking = atom({ plugin: 'coanda', key: 'goalsAsking' } as const, false)
+// Claude's proposal for the goals file (`propose_goals`), shown in Setup until saved or dropped.
+const goalsProposal = atom({ plugin: 'coanda', key: 'goalsProposal' } as const, null as GoalsProposal | null)
 const detailsOpen = atom({ plugin: 'coanda', key: 'detailsOpen' } as const, false)
 // Today's Primary typed in the band, as store.ts last read or wrote it; null when none.
 // /coanda-specimen: the band shows every drawing option once, to see how the desktop draws them.
 const specimen = atom({ plugin: 'coanda', key: 'specimen' } as const, false)
+// /coanda-demo: the screen shown (an index into the demo list); null when the demo is off.
+const demo = atom({ plugin: 'coanda', key: 'demo' } as const, null as number | null)
+// /coanda-demo's flow: 'on' while the demo runs from zero (the real data is backed up), 'offer' when a backup was
+// found and the person is asked to restore it.
+const demoMode = atom({ plugin: 'coanda', key: 'demoMode' } as const, 'off' as 'off' | 'on' | 'offer')
 // /coanda-grid: the band shows the measuring page (rulers, steps, text sizes, contrast).
 const grid = atom({ plugin: 'coanda', key: 'grid' } as const, false)
 // /coanda-lab: the band shows the host-capability tests (SVG animation, press, Client timer, drag, boxes).
@@ -162,20 +170,28 @@ export async function updateSetupOpen($: StateDollar, change: (now: boolean) => 
   return update($, setupOpen, change)
 }
 
-export async function getSetupStep($: StateDollar): Promise<number> {
-  return read($, setupStep)
-}
-
-export async function updateSetupStep($: StateDollar, change: (now: number) => number): Promise<number> {
-  return update($, setupStep, change)
-}
-
 export async function getSetupDraft($: StateDollar): Promise<SetupDraft> {
   return read($, setupDraft)
 }
 
 export async function updateSetupDraft($: StateDollar, change: (now: SetupDraft) => SetupDraft): Promise<SetupDraft> {
   return update($, setupDraft, change)
+}
+
+export async function getGoalsAsking($: StateDollar): Promise<boolean> {
+  return read($, goalsAsking)
+}
+
+export async function updateGoalsAsking($: StateDollar, change: (now: boolean) => boolean): Promise<boolean> {
+  return update($, goalsAsking, change)
+}
+
+export async function getGoalsProposal($: StateDollar): Promise<GoalsProposal | null> {
+  return read($, goalsProposal)
+}
+
+export async function updateGoalsProposal($: StateDollar, change: (now: GoalsProposal | null) => GoalsProposal | null): Promise<GoalsProposal | null> {
+  return update($, goalsProposal, change)
 }
 
 export async function getDetailsOpen($: StateDollar): Promise<boolean> {
@@ -200,6 +216,22 @@ export async function getSpecimen($: StateDollar): Promise<boolean> {
 
 export async function updateSpecimen($: StateDollar, change: (now: boolean) => boolean): Promise<boolean> {
   return update($, specimen, change)
+}
+
+export async function getDemo($: StateDollar): Promise<number | null> {
+  return read($, demo)
+}
+
+export async function updateDemo($: StateDollar, change: (now: number | null) => number | null): Promise<number | null> {
+  return update($, demo, change)
+}
+
+export async function getDemoMode($: StateDollar): Promise<'off' | 'on' | 'offer'> {
+  return read($, demoMode)
+}
+
+export async function updateDemoMode($: StateDollar, change: (now: 'off' | 'on' | 'offer') => 'off' | 'on' | 'offer'): Promise<'off' | 'on' | 'offer'> {
+  return update($, demoMode, change)
 }
 
 export async function getLab($: StateDollar): Promise<boolean> {

@@ -1,6 +1,8 @@
 import type { ElementTable } from 'claude-code'
 
 import type { BandAction, BandButton, BandInput, BandModel, BandRow } from '../types'
+import { ABOVE_PRIMARY, AFTER_HEADING, INSET, ruleItem, placeScreen } from './layout'
+import type { Placed } from './layout'
 
 export type Draw = {
   // The surface's elements, resolved by register.tsx.
@@ -32,6 +34,8 @@ const OK = 'success'
 
 // The label column, in cells: 16 keeps "SETUP · 2 OF 2" on one line (seen C2).
 export const LABEL_WIDTH = 16
+// The field of a headed step, in cells (Nicolas's canvas, 14 Nov: 65).
+const STEP_FIELD = 65
 
 export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JSX.Element {
   const { Box, Button, Text } = draw.ui
@@ -53,9 +57,9 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
     b.detail === undefined ? (
       button(b)
     ) : (
-      <Box key={b.key} flexDirection="column" flexShrink={1}>
+      <Box key={b.key} flexDirection="column" flexShrink={1} gap={1}>
         {button(b)}
-        <Text size="caption" color={MUTED} wrap="wrap">
+        <Text color={MUTED} wrap="wrap">
           {b.detail}
         </Text>
       </Box>
@@ -115,7 +119,8 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
         {text}
       </Text>
     ) : (
-      <Text color={INK} wrap="truncate-end">
+      // The status line (Idle, Working): bold, in ink. Dusk is for the Primary only (Nicolas, 14 Nov 13:49).
+      <Text weight="bold" color={INK} wrap="truncate-end">
         {text}
       </Text>
     )
@@ -177,41 +182,165 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
     )
   }
 
-  // Intent's Primary row under the box: the goal in semibold, "Details" after it; open, the Lane
-  // line, muted.
-  const primaryRow = (p: BandRow) => {
-    const [goal = '', ...more] = p.text
+  // The always-there area and the steps that need the person, placed (layout.tsx; Nicolas's sketches of
+  // Sat 14 Nov): a bold heading when the person has something to do, one line right under it, the
+  // content from the row after the line, and a line above the Primary row so it always stands apart.
+  // Every item is at a row and a cell, so a screen is a list, not nested flow.
+  const rowsScreen = (m: Extract<BandModel, { kind: 'rows' }>, minRows = 0) => {
+    const items: Placed[] = []
+    const field = Math.min(STEP_FIELD, columns - 20)
+    const inner = columns - 2 * INSET
+    let y = 0
 
-    return (
-      <Box flexDirection="column" paddingX={1}>
-        <Box flexDirection="row" alignItems="center" gap={1}>
-          <Box flexShrink={1} minWidth={0} overflow="hidden">
-            <Text color={INK} weight="semibold" wrap="truncate-end">
-              {goal}
-            </Text>
+    if (m.heading !== undefined) {
+      // The severity belongs next to the heading, not on the question line (Nicolas, 14 Nov 13:57).
+      const severity = m.rows.find(r => r.chip !== undefined)?.chip
+      items.push({
+        key: 'heading',
+        y,
+        x: INSET,
+        width: columns - 2 * INSET,
+        node: (
+          <Box flexDirection="row" alignItems="flex-end" gap={1}>
+            <Text weight="bold" size="heading" color={INK}>{m.heading.toUpperCase()}</Text>
+            {/* The same middle dot the band uses between parts ("Idle · merged into main"). */}
+            {severity !== undefined && <Text color={MUTED}>·</Text>}
+            {severity !== undefined && <Text color={RISK}>{`⚠ ${severity}`}</Text>}
           </Box>
-          <Box flexShrink={0}>{p.buttons.map(button)}</Box>
-        </Box>
-        {more.map((line, at) => (
-          <Text key={`more-${at}`} color={MUTED} wrap="wrap">
-            {line}
-          </Text>
-        ))}
-      </Box>
-    )
+        ),
+      })
+      items.push(ruleItem(draw, 'heading-rule', y + 1, AFTER_HEADING))
+      y += 2
+    }
+
+    m.rows.forEach((r, i) => {
+      const [first, ...more] = r.text
+      // With a heading the severity is drawn next to it; without one it stays on the line.
+      const chip = m.heading === undefined ? r.chip : undefined
+      const hasLine = first !== undefined || chip !== undefined || r.source !== undefined
+      const inputs = Input === undefined ? [] : (r.inputs ?? [])
+
+      if (hasLine) {
+        items.push({
+          key: `row-${i}-first`,
+          y,
+          x: INSET,
+          width: inner,
+          node: (
+            <Box flexDirection="row" alignItems="flex-start" gap={1}>
+              {first !== undefined && <Box flexShrink={1} minWidth={0}>{firstLine(r, first)}</Box>}
+              {chip !== undefined && <Box flexShrink={0}><Text color={RISK}>{`⚠ ${chip}`}</Text></Box>}
+              {r.source !== undefined && <Box flexShrink={0}><Text mono color={WARN}>{r.source}</Text></Box>}
+            </Box>
+          ),
+        })
+        y += 1
+      }
+      more.forEach((line, at) => {
+        items.push({ key: `row-${i}-line-${at}`, y, x: INSET, width: inner, node: <Text color={INK} wrap="truncate-end">{line}</Text> })
+        y += 1
+      })
+
+      inputs.forEach(one => {
+        if (Input === undefined) return
+        items.push({
+          key: `input-${one.key}`,
+          y,
+          x: INSET,
+          width: field,
+          node: (
+            <Input
+              key={one.key}
+              rows={2}
+              autoFocus
+              placeholder={one.placeholder ?? ''}
+              value={one.value}
+              onInput={value => void dispatch({ ...one.action, value } as BandAction)}
+              onSubmit={value => void dispatch({ ...one.action, value, submit: true } as BandAction)}
+            />
+          ),
+        })
+        if (one.button !== undefined) {
+          items.push({ key: `button-${one.key}`, y: y + 1, x: INSET + field + 3, node: <Button key={one.button.key} variant="primary" label={one.button.label} onPress={press(one.button.action)} /> })
+        }
+        // The field takes 2 rows; a button beside it starts on the second and is 1.4 rows tall, so it needs a third (seen 14 Nov 16:58: Set was cut off by the stage's edge).
+        y += one.button === undefined ? 2 : 3
+      })
+
+      if (r.buttons.length > 0) {
+        // Plan rule R8: one blank row between blocks (the question and its buttons are two blocks). I dropped it in 0.1.25 and the buttons touched the text (seen 14 Nov 13:18).
+        if (hasLine || more.length > 0) y += 1
+        items.push({
+          key: `row-${i}-buttons`,
+          y,
+          x: INSET,
+          width: inner,
+          node: (
+            // All buttons sit together like every other button row; a consequence is no longer a column under its button (a long one pushed the next button away, seen 14 Nov 13:56).
+            <Box flexDirection="row" flexWrap="wrap" alignItems="flex-start" gap={1}>
+              {r.buttons.map(button)}
+            </Box>
+          ),
+        })
+        // A native button is about 1.4 rows tall (seen 14 Nov: 28 px), so it takes 2 rows.
+        y += 2
+        // One line per consequence under the buttons: the option's name, then what follows from it.
+        r.buttons.forEach(b => {
+          if (b.detail === undefined) return
+          items.push({
+            key: `row-${i}-detail-${b.key}`,
+            y,
+            x: INSET,
+            width: inner,
+            node: (
+              <Text color={MUTED} wrap="truncate-end">
+                {`${b.label}: ${b.detail}`}
+              </Text>
+            ),
+          })
+          y += 1
+        })
+      }
+    })
+
+    if (m.primary !== undefined) {
+      const [goal = '', ...more] = m.primary.text
+      // The line has a row of its own, drawn in the middle, so the row above and the Primary row both have air (seen 14 Nov 13:17: a line at the row's top touched both).
+      if (m.rows.length > 0) {
+        items.push(ruleItem(draw, 'primary-rule', y, ABOVE_PRIMARY))
+        y += 1
+      }
+      items.push({
+        key: 'primary',
+        y,
+        x: INSET,
+        width: inner,
+        node: (
+          <Box flexDirection="row" alignItems="center" gap={1}>
+            <Box flexShrink={1} minWidth={0} overflow="hidden">
+              <Text color={DUSK} weight="semibold" wrap="truncate-end">{goal}</Text>
+            </Box>
+            {/* The spacer pushes Details to the right edge: no cell counting (Ponytail). */}
+            <Box flexGrow={1} />
+            <Box flexShrink={0}>{m.primary.buttons.map(button)}</Box>
+          </Box>
+        ),
+      })
+      y += 1
+      more.forEach((line, at) => {
+        items.push({ key: `primary-more-${at}`, y, x: INSET, width: inner, node: <Text color={MUTED} wrap="truncate-end">{line}</Text> })
+        y += 1
+      })
+    }
+
+    // The lamp's stage is taller than the content: the screen fills it, so nothing moves when the light opens.
+    return placeScreen(draw, Math.max(y, minRows), items)
   }
 
-  // The engine's node may not sit under a Box with a width (Intent's lesson): the outer Box is a
-  // column with no width; the frame carries the width.
-  if (model.kind === 'rows')
-    return (
-      <Box flexDirection="column" gap={1}>
-        {model.rows.length > 0 && frame(model.rows)}
-        {model.primary !== undefined && primaryRow(model.primary)}
-      </Box>
-    )
+  if (model.kind === 'rows') return rowsScreen(model)
 
-  if (model.kind === 'setup') return <Box flexDirection="column">{frame(model.rows, setupRows)}</Box>
+  // Setup is a step that needs the person: a heading, one line, the goals found, buttons; no Primary line.
+  if (model.kind === 'setup') return rowsScreen({ kind: 'rows', moment: 'resting', heading: model.heading, rows: model.rows }, setupRows)
 
   // 'hidden' draws nothing; 'gate' (the first-thought step, stage 3) is not produced yet.
   return <Box flexDirection="column" />

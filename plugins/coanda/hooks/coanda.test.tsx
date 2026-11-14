@@ -6,7 +6,8 @@ import type { BandModel, BandRow, Card, Setup, Snapshot, Step } from '../types'
 import { bandModel, overBudget } from './band'
 import { LABEL_WIDTH } from './render'
 import { close, supersede, toCard } from './cards'
-import { checkFocusPath, checkLane, endLabel, focusSourceOf, laneText, parseFocus, parseFocusMd, parsePlain, primaryText, shortPrimary } from './focus'
+import { goalsMessage, proposalLane, proposalMessage, proposalText, toProposal } from './goals-ask'
+import { endLabel, goalsState, focusSourceOf, laneText, parseFocus, parseFocusMd, parsePlain, primaryText, shortPrimary } from './focus'
 import { claudeConfigDir } from './io'
 import { parseNext, parseSuggestions, questionToShow, toAsked } from './next'
 import { applyPlan, lastOutcomeStep, noteCall } from './plan'
@@ -212,8 +213,10 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
   isWorking: false,
   setup: SETUP_DONE,
   setupOpen: false,
-  setupStep: 0,
-  setupDraft: { file: '', lane: '', end: '', primary: '', fileNote: '', laneNote: '' },
+  setupDraft: { primary: '' },
+  goalsPath: '/home/n/.claude/goals.md',
+  goalsAsking: false,
+  goalsProposal: null,
   focus: { status: 'ok', primary: 'Ship the v0.1 install', laneId: 'own-1', lanes: [] },
   sessionPrimary: null,
   cards: [],
@@ -269,42 +272,14 @@ test('v3: Setup comes first, until finished or reopened', () => {
   expect(bandModel(snap({ setup: { ...SETUP_DONE, doneAt: null } })).kind).toBe('setup')
   expect(bandModel(snap({ setupOpen: true, cards: [cardOf('c1')] })).kind).toBe('setup')
   const setup = bandModel(snap({ setup: { ...SETUP_DONE, doneAt: null } }))
-  expect(JSON.stringify(setup)).toContain('Setup · 1 of 2')
+  expect(JSON.stringify(setup)).toContain('Set up your goals')
 })
 
-test('v3 Setup: one question per step, one way to submit, the answer stronger than the exit', () => {
-  const first = (over: Partial<Snapshot>) => bandModel(snap({ setup: { ...SETUP_DONE, doneAt: null, lanes: [] }, ...over }))
-  const rowOfStep = (model: BandModel) => {
-    if (model.kind !== 'setup') throw new Error(`expected setup, got ${model.kind}`)
-    expect(model.rows).toHaveLength(1)
-
-    return model.rows[0]!
-  }
-
-  // Step 1: the goals file. Nothing kept: the quiet "Skip" only; Enter is named "use".
-  const file = rowOfStep(first({}))
-  expect(file).toMatchObject({ label: 'Setup · 1 of 2', text: ['Where are your goals written?'] })
-  // The field's submit is a button element after it (band-mapping.md, 12); no chip name, so no host chip (seen A5).
-  expect(file.inputs?.map(one => [one.key, one.submitLabel, one.button?.label])).toEqual([['setup-file', undefined, 'Use']])
-  expect(labels(file)).toEqual(['~Skip'])
-  // A file kept: "Next" as the one primary button, no Skip.
-  const kept = rowOfStep(first({ setup: { ...SETUP_DONE, doneAt: null, lanes: [], focus: { kind: 'file', path: '/data/goals.md' } } }))
-  expect(kept.text).toContain('Reading: /data/goals.md')
-  expect(kept.buttons.map(b => [b.label, b.variant])).toEqual([['Next', 'primary']])
-
-  // Step 2: the Lanes. Two fields, both submitting the Lane; "Done" once something is kept.
-  const lanes = rowOfStep(first({ setupStep: 1 }))
-  expect(lanes).toMatchObject({ label: 'Setup · 2 of 2', text: ['What are you working toward? 1 to 3 Lanes.'] })
-  expect(lanes.inputs?.map(one => [one.key, one.submitLabel, one.button?.label])).toEqual([['setup-lane', undefined, undefined], ['setup-end', undefined, 'Add Lane']])
-  expect(labels(lanes)).toEqual(['~Skip'])
-  const withLane = rowOfStep(first({ setupStep: 1, setup: { ...SETUP_DONE, doneAt: null } }))
-  expect(withLane.text).toContain('1. Proof: MVP live')
-  expect(labels(withLane)).toEqual(['Remove 1', 'Done'])
-
-  // The budget for a Setup step: no second way to submit, at most 1 primary and 1 link.
-  for (const one of [first({}), first({ setupStep: 1, setup: SETUP_DONE, setupOpen: true })]) expect(overBudget(one)).toEqual([])
-  const doubled: BandModel = { kind: 'setup', step: 0, rows: [{ ...file, buttons: [...file.buttons, { key: 'x', label: 'Use this file', variant: 'secondary', action: { kind: 'setupFile' } }] }] }
-  expect(overBudget(doubled)).toEqual(['secondary: 1 of at most 0'])
+test('v3 Setup budget: a second strong button is over budget', () => {
+  const model = bandModel(snap({ setup: { ...SETUP_DONE, doneAt: null }, focus: { status: 'ok', primary: 'x', laneId: '', lanes: [] } }))
+  if (model.kind !== 'setup') throw new Error('expected setup')
+  const doubled: BandModel = { ...model, rows: [{ ...model.rows[0]!, buttons: [...model.rows[0]!.buttons, { key: 'x', label: 'Another', variant: 'primary', action: { kind: 'goalsKeep' } }] }] }
+  expect(overBudget(doubled)).toEqual(['primary: 2 of at most 1'])
 })
 
 test('v3 Resting: one NOW line; a finished plan is a tool fact, the model\'s "done" is stamped inferred', () => {
@@ -417,14 +392,15 @@ test('no Primary: Resting and Working offer the PRIMARY row with its field and "
 
   expect(resting.moment).toBe('resting')
   expect(resting.primary).toBeUndefined()
-  const set = resting.rows[1]!
-  expect(set).toMatchObject({ part: 'primary', label: 'Primary', text: [] })
+  const set = resting.rows[0]!
+  expect(set).toMatchObject({ part: 'primary', text: [] })
+  expect(resting.heading).toBe('Set your Primary')
   expect(set.inputs?.map(one => [one.key, one.placeholder, one.button?.label])).toEqual([['primary-input', 'The one thing today…', 'Set']])
   expect(set.inputs?.[0]?.button?.action).toEqual({ kind: 'primarySet' })
   expect(overBudget(resting)).toEqual([])
-  expect(rowsOf(bandModel(snap({ ...none, isWorking: true }))).rows[1]?.label).toBe('Primary')
+  expect(rowsOf(bandModel(snap({ ...none, isWorking: true }))).heading).toBe('Set your Primary')
   // A closed or unreadable goals file says why, in plain words.
-  expect(rowsOf(bandModel(snap({ focus: { status: 'unreadable', primary: '', laneId: '', lanes: [] } }))).rows[1]?.text).toEqual(['Focus file not readable'])
+  expect(rowsOf(bandModel(snap({ focus: { status: 'unreadable', primary: '', laneId: '', lanes: [] } }))).rows[0]?.text).toEqual(['Focus file not readable'])
   // While something is asked, the choices only: the Primary row stays under the band.
   const pick = rowsOf(bandModel(snap({ ...none, cards: [cardOf('c1')] })))
   expect(pick.rows).toHaveLength(1)
@@ -541,6 +517,10 @@ type Own = {
   env: Record<string, string>
   docs?: Record<string, unknown>
   now?: number
+  // Paths that exist but cannot be read.
+  unreadable?: string[]
+  // The engine refuses every submitted prompt.
+  submitFails?: true
 }
 
 // A band mounted over a person's own setup: what `$.store` holds, the files that exist, the
@@ -558,6 +538,7 @@ async function bandOver($: Parameters<TestBody>[0], on: Parameters<TestBody>[1],
   const commands: string[] = []
   on('command.register', (_, e) => (commands.push(e.name), { value: { command: e.name } }))
   on('tool.call', () => ({ result: {} }))
+  on('fs.exists', (_, e) => ({ value: own.files[e.path] !== undefined || (own.unreadable ?? []).includes(e.path) }))
   on('fs.read', (_, e) => {
     reads.push(e.path)
     const text = own.files[e.path]
@@ -565,11 +546,18 @@ async function bandOver($: Parameters<TestBody>[0], on: Parameters<TestBody>[1],
 
     return { value: text }
   })
-  on('fs.write', () => ({ value: undefined }))
+  const writes: { path: string; text: string }[] = []
+  on('fs.write', (_, e) => (writes.push({ path: e.path, text: e.text }), (own.files[e.path] = e.text), { value: undefined }))
   on('session.id', () => ({ value: 's1' }))
   on('store.get', (_, e) => ({ value: saved[e.key] ?? null }))
   on('store.set', (_, e) => (sets.push({ key: e.key, value: e.value }), (saved[e.key] = e.value), { value: undefined }))
-  on('prompt.submit', (_, e) => (sent.push(e.text), { text: e.text }))
+  on('store.delete', (_, e) => (delete saved[e.key], { value: undefined }))
+  on('prompt.submit', (_, e) => {
+    sent.push(e.text)
+    if (own.submitFails === true) throw new Error('refused')
+
+    return { text: e.text }
+  })
   on('prompt.read', () => ({ value: { text: '', cursor: 0 } }))
   on('prompt.fill', () => ({ isFilled: true }))
   on('ui.toast', (_, e) => (toasts.push(e.text), { value: undefined }))
@@ -594,7 +582,7 @@ async function bandOver($: Parameters<TestBody>[0], on: Parameters<TestBody>[1],
   await start()
   const ui = await $.ui.mount(BAND)
 
-  return { ui, clock, reads, saved, sets, sent, toasts, model, commands, restart: start }
+  return { ui, clock, reads, writes, saved, sets, sent, toasts, model, commands, restart: start }
 }
 
 type Ui = Awaited<ReturnType<typeof bandOver>>['ui']
@@ -625,7 +613,7 @@ test('FR-2 c3: a file that cannot be read says so in plain words', async ($, on)
 
   // No usable Primary: the PRIMARY row says why and offers the field and "Set".
   expect(await primaryOf(ui)).toBeUndefined()
-  expect(await texts(ui)).toContain('PRIMARY')
+  expect(await texts(ui)).toContain('SET YOUR PRIMARY')
   expect(await texts(ui)).toContain('Focus file not readable')
   expect(await keyOf(ui, 'Set')).toBe('primary-set')
   await ui.unmount()
@@ -635,7 +623,7 @@ test('FR-2 c4: with no Focus source saved, the row reads "no Primary set" and no
   const { ui, reads } = await bandOver($, on, { setup: { v: 1, doneAt: 1, focus: null }, files: {}, env: { HOME: '/home/n' } })
 
   expect(await primaryOf(ui)).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^PRIMARY$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^SET YOUR PRIMARY$/ })).toBeDefined()
   expect(await keyOf(ui, 'Set')).toBe('primary-set')
   expect(reads).toEqual([])
   await ui.unmount()
@@ -645,7 +633,7 @@ test('FR-2 c4: with no home directory the band still draws and reads no file', a
   const { ui, reads } = await bandOver($, on, { setup: { v: 1, doneAt: 1, focus: null }, files: {}, env: {} })
 
   expect(await primaryOf(ui)).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^PRIMARY$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^SET YOUR PRIMARY$/ })).toBeDefined()
   expect(await keyOf(ui, 'Set')).toBe('primary-set')
   expect(reads).toEqual([])
   await ui.unmount()
@@ -653,151 +641,284 @@ test('FR-2 c4: with no home directory the band still draws and reads no file', a
 
 // ---- Adapted: the Setup moment -------------------------------------------------------------
 
-test('FR-1 c1: with no saved setup the Setup moment shows and none of the usual rows', async ($, on) => {
-  const { ui } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
+// The first Setup opens with the lamp, whose one button sits over the real band.
+const setupButtons = async (ui: Ui) => (await buttonsOf(ui)).filter(one => one !== 'Pull the cord')
+const GOALS_PATH = '/home/n/.claude/goals.md'
+const GOALS_TEXT = '## Today\n- **Primary (14 Nov, N): Ship the v0.1 install (Lane 1).**\n- **Lane 1 — Install:** portfolio live by 14 Dec.\n- **Lane 2 — Page:** the product page shipped by 5 Dec.\n'
 
-  expect(await texts(ui)).toContain('SETUP · 1 OF 2')
-  expect(await texts(ui)).toContain('Where are your goals written?')
+test('goalsState: goals found, nothing found, or a file that cannot be read', () => {
+  expect(goalsState(parseFocus(GOALS_TEXT, NOW))).toBe('found')
+  // Lanes alone are goals; a closed Primary with no Lane is nothing.
+  expect(goalsState({ status: 'none', primary: '', laneId: '', lanes: [{ id: 'lane-1', outcome: 'x' }] })).toBe('found')
+  expect(goalsState({ status: 'closed', primary: '', laneId: '', lanes: [] })).toBe('nothing')
+  expect(goalsState({ status: 'none', primary: '', laneId: '', lanes: [] })).toBe('nothing')
+  expect(goalsState({ status: 'unreadable', primary: '', laneId: '', lanes: [] })).toBe('unreadable')
+})
+
+test('Setup model: goals found shows the Goal and up to 3 Lanes with one strong button; nothing found says what a Goal is', () => {
+  const open = (over: Partial<Snapshot>) => bandModel(snap({ setup: { ...SETUP_DONE, doneAt: null, lanes: [] }, goalsPath: GOALS_PATH, ...over }))
+  const rowOf = (model: BandModel) => {
+    if (model.kind !== 'setup') throw new Error(`expected setup, got ${model.kind}`)
+    expect(model.heading).toBe('Set up your goals')
+    expect(model.rows).toHaveLength(1)
+
+    return model.rows[0]!
+  }
+  const lanes = [1, 2, 3, 4].map(n => ({ id: `lane-${n}`, outcome: `Lane outcome ${n}`, ...(n === 1 ? { endDay: '2026-12-14' } : {}) }))
+
+  const found = rowOf(open({ now: new Date(2026, 10, 14).getTime(), focus: { status: 'ok', primary: 'Ship the v0.1 install', laneId: 'lane-1', lanes } }))
+  // 6 content rows at most: the Goal and 3 Lanes, never a fourth.
+  expect(found.text).toEqual(['Goal    Ship the v0.1 install', 'Lane 1  Lane outcome 1 · by 14 Dec', 'Lane 2  Lane outcome 2', 'Lane 3  Lane outcome 3'])
+  expect(found.buttons.map(b => [b.label, b.variant])).toEqual([['Looks right', 'primary'], ['Change', 'secondary'], ['Skip for now', 'link']])
+  expect(found.inputs).toBeUndefined()
+
+  // Lanes with a closed Primary: no Goal line.
+  expect(rowOf(open({ focus: { status: 'closed', primary: '', laneId: '', lanes: lanes.slice(0, 1) } })).text[0]).toMatch(/^Lane 1 /)
+
+  const nothing = rowOf(open({ focus: { status: 'none', primary: '', laneId: '', lanes: [] } }))
+  expect(nothing.text).toEqual(['A Goal is the one thing that counts today.', 'A Lane is a longer outcome with a date, like portfolio live by 14 Dec.'])
+  expect(nothing.buttons.map(b => [b.label, b.variant])).toEqual([['Set up with Claude', 'primary'], ['Find them for me', 'secondary'], ['Skip for now', 'link']])
+  expect(nothing.inputs).toBeUndefined()
+
+  const unreadable = rowOf(open({ focus: { status: 'unreadable', primary: '', laneId: '', lanes: [] } }))
+  expect(unreadable.text).toEqual([`I couldn't read ${GOALS_PATH}.`])
+  expect(unreadable.buttons.map(b => b.label)).toEqual(['Ask Claude to fix it', 'Skip for now'])
+
+  // State 1: Claude was asked; nothing else to press but the exit.
+  const asking = rowOf(open({ goalsAsking: true }))
+  expect(asking.text).toEqual(['Asking Claude about your goals and Lanes…'])
+  expect(asking.buttons.map(b => b.label)).toEqual(['Skip for now'])
+
+  // In the demo a goals file of the demo's own can be created; the person's own files are not offered.
+  const demo = rowOf(open({ demoGoals: '/demo/goals.md', focus: { status: 'none', primary: '', laneId: '', lanes: [] } }))
+  expect(demo.buttons.map(b => [b.label, b.variant])).toEqual([['Create a demo goals file', 'primary'], ['Set up with Claude', 'secondary'], ['Find them for me', 'secondary'], ['Skip for now', 'link']])
+
+  // The budget of a Setup step: one strong button, one quiet exit, nothing to type.
+  for (const model of [open({}), open({ focus: { status: 'none', primary: '', laneId: '', lanes: [] } })]) expect(overBudget(model)).toEqual([])
+})
+
+test('Setup: with no saved setup and no goals file it says nothing was found, reads no other file, and has nothing to type', async ($, on) => {
+  const { ui, reads } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
+
+  expect(await texts(ui)).toContain('SET UP YOUR GOALS')
+  expect(await texts(ui)).toContain('A Goal is the one thing that counts today.')
+  expect(await ui.findAll({ type: 'Input' })).toHaveLength(0)
+  expect(await setupButtons(ui)).toEqual(['Set up with Claude', 'Find them for me', 'Skip for now'])
   expect(await primaryOf(ui)).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^NOW$/ })).toBeUndefined()
+  expect(reads).toEqual([])
   await ui.unmount()
 })
 
-test('FR-1 c2: finished or skipped, the usual rows show and the Setup moment does not come back', async ($, on) => {
+test('Setup: "Skip for now" finishes it for good: the usual band shows and does not go back', async ($, on) => {
   const { ui, restart, saved } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
 
-  await ui.press({ key: 'setup-next' }) // Skip the goals file
-  expect(await texts(ui)).toContain('SETUP · 2 OF 2')
-  await ui.press({ key: 'setup-next' }) // Skip the Lanes: the last step
-  expect(await ui.find({ type: 'Text', text: /^PRIMARY$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^SETUP ·/ })).toBeUndefined()
-  expect(saved.setup).toMatchObject({ v: 1, lanes: [], focus: null })
+  await ui.press({ key: 'setup-skip' })
+  expect(await ui.find({ type: 'Text', text: /^SET YOUR PRIMARY$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^SET UP YOUR GOALS$/ })).toBeUndefined()
+  expect(saved.setup).toMatchObject({ v: 1, focus: null })
   expect(typeof (saved.setup as { doneAt: unknown }).doneAt).toBe('number')
-  // A reload (a new session start) reads the saved setup: still the usual rows.
   await restart()
-  expect(await ui.find({ type: 'Text', text: /^SETUP ·/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /^PRIMARY$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^SET UP YOUR GOALS$/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^SET YOUR PRIMARY$/ })).toBeDefined()
   await ui.unmount()
 })
 
-test('FR-2 c1: a path starting with ~/ is stored absolute; its Primary shows after setup', async ($, on) => {
-  const { ui, saved } = await bandOver($, on, { setup: undefined, files: { '/home/n/goals.md': 'Ship the intake form\n' }, env: { HOME: '/home/n' } })
+test('Setup: a goals file at ~/.claude/goals.md is found; "Looks right" keeps it and its Primary shows', async ($, on) => {
+  const { ui, saved } = await bandOver($, on, { setup: undefined, files: { [GOALS_PATH]: GOALS_TEXT }, env: { HOME: '/home/n' } })
 
-  // Enter in the field is the one way to submit.
-  await ui.input({ key: 'setup-file', text: '~/goals.md', kind: 'submit' })
-  expect(saved.setup).toMatchObject({ focus: { kind: 'file', path: '/home/n/goals.md' } })
-  expect(await texts(ui)).toContain('Ship the intake form')
-  await ui.press({ key: 'setup-next' }) // Next
-  await ui.press({ key: 'setup-next' }) // Done: a file is kept, so the last step finishes
-  expect(await primaryOf(ui)).toBe('◎ Ship the intake form')
+  expect(await texts(ui)).toContain('SET UP YOUR GOALS')
+  expect(await texts(ui)).toContain('Goal    Ship the v0.1 install')
+  expect(await texts(ui)).toContain('Lane 1  Install: portfolio live')
+  expect(await texts(ui)).toContain('Lane 2  Page: the product page shipped')
+  expect(await setupButtons(ui)).toEqual(['Looks right', 'Change', 'Skip for now'])
+  expect(await ui.findAll({ type: 'Input' })).toHaveLength(0)
+  await ui.press({ key: 'setup-keep' })
+  expect(saved.setup).toMatchObject({ focus: { kind: 'file', path: GOALS_PATH } })
+  expect(typeof (saved.setup as { doneAt: unknown }).doneAt).toBe('number')
+  expect(await primaryOf(ui)).toBe('◎ Ship the v0.1 install')
+  expect(await ui.find({ type: 'Text', text: /^SET UP YOUR GOALS$/ })).toBeUndefined()
   await ui.unmount()
 })
 
-test('FR-2 c1: any other relative path is refused in plain words and nothing is saved', async ($, on) => {
-  const { ui, saved, reads } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
+test('toProposal: a Goal and up to 3 Lanes; refusals are plain sentences; the file text is what the band reads back', () => {
+  expect(toProposal({})).toContain('goal is empty')
+  expect(toProposal({ goal: 'Finish Coanda', lanes: [{ name: 'Visible' }] })).toContain('needs a name and an outcome')
+  const p = toProposal({ goal: ' Finish  Coanda ', lanes: [{ name: 'Visible', outcome: 'be visible with a product use case', by: '14 Dec' }, { name: 'Page', outcome: 'ship it' }, { name: 'c', outcome: 'x' }, { name: 'd', outcome: 'y' }] })
+  if (typeof p === 'string') throw new Error(p)
+  expect(p.goal).toBe('Finish Coanda')
+  expect(p.lanes).toHaveLength(3)
+  expect(proposalLane(p.lanes[0]!, 0)).toBe('Lane 1  Visible: be visible with a product use case · by 14 Dec')
+  expect(proposalLane(p.lanes[1]!, 1)).toBe('Lane 2  Page: ship it')
+  // Read back by the same parser the band uses: the same Goal and Lanes.
+  const back = parseFocusMd(proposalText(p), NOW)
+  expect(back).toMatchObject({ status: 'ok', primary: 'Finish Coanda', laneId: 'lane-1' })
+  expect(back.lanes.map(l => l.outcome)).toEqual(['Visible: be visible with a product use case', 'Page: ship it', 'c: x'])
+  expect(proposalMessage('save', GOALS_PATH, p)).toContain(`${GOALS_PATH}, exactly as written`)
+  expect(proposalMessage('revise', GOALS_PATH, p)).toContain('propose_goals')
+  // A Goal alone is fine, with no Lane reference.
+  expect(proposalText({ goal: 'Ship', lanes: [] })).toBe('## Today\n- **Primary (N): Ship.**')
+})
 
-  await ui.input({ key: 'setup-file', text: 'goals.md', kind: 'submit' })
-  expect(await texts(ui)).toContain('relative path')
-  expect(saved.setup).toBeUndefined()
-  expect(reads).not.toContain('goals.md')
-  expect(checkFocusPath('../x.md', '/home/n')).toMatchObject({ ok: false })
-  expect(checkFocusPath('~/x.md', null)).toMatchObject({ ok: false })
+test('Setup state 4: Claude proposes through propose_goals; Save these sends Claude the file text (Coanda writes nothing); Not these drops it', async ($, on) => {
+  const own = { setup: undefined, files: {} as Record<string, string>, env: { HOME: '/home/n' } }
+  const { ui, sent, writes } = await bandOver($, on, own)
+
+  const result = await $.tool.call({ tool: 'mcp__coanda__propose_goals', goal: 'Finish Coanda', lanes: [{ name: 'Visible', outcome: 'be visible with a product use case', by: '14 Dec' }] } as never)
+  expect(JSON.stringify(result)).toContain('Proposal shown')
+  expect(await texts(ui)).toContain('Goal    Finish Coanda')
+  expect(await texts(ui)).toContain('Lane 1  Visible: be visible with a product use case · by 14 Dec')
+  expect(await texts(ui)).toContain('inferred')
+  expect(await setupButtons(ui)).toEqual(['Save these', 'Change', 'Not these'])
+
+  // Not these: the proposal goes, nothing is sent or written.
+  await ui.press({ key: 'proposal-drop' })
+  expect(await texts(ui)).toContain('A Goal is the one thing that counts today.')
+  expect(sent).toEqual([])
+
+  await $.tool.call({ tool: 'mcp__coanda__propose_goals', goal: 'Finish Coanda', lanes: [] } as never)
+  await ui.press({ key: 'proposal-save' })
+  expect(sent).toHaveLength(1)
+  expect(sent[0]).toContain(`Save these goals to ${GOALS_PATH}`)
+  expect(sent[0]).toContain('- **Primary (N): Finish Coanda.**')
+  expect(writes).toEqual([])
+  expect(await texts(ui)).toContain('Asking Claude')
+  // Claude wrote the file and its turn ends: the goals show to confirm.
+  own.files[GOALS_PATH] = sent[0]!.split(':\n')[1]!
+  await done($, 't1', 'Saved.')
+  expect(await texts(ui)).toContain('Goal    Finish Coanda')
+  expect(await texts(ui)).not.toContain('Asking Claude')
+  expect(await setupButtons(ui)).toEqual(['Looks right', 'Change', 'Skip for now'])
   await ui.unmount()
 })
 
-test('FR-2 c1: a file that cannot be read at setup says so in plain words', async ($, on) => {
-  const { ui, saved } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
+test('Setup state 4: a proposal opens Setup if it was closed; a refused proposal changes nothing', async ($, on) => {
+  const { ui } = await bandOver($, on, { ...READY_SETUP, now: THEN })
 
-  await ui.input({ key: 'setup-file', text: '/data/gone.md', kind: 'submit' })
-  expect(await texts(ui)).toContain('That file cannot be read: /data/gone.md')
-  expect(saved.setup).toBeUndefined()
+  expect(JSON.stringify(await $.tool.call({ tool: 'mcp__coanda__propose_goals', goal: '' } as never))).toContain('goal is empty')
+  expect(await ui.find({ type: 'Text', text: /^SET UP YOUR GOALS$/ })).toBeUndefined()
+  await $.tool.call({ tool: 'mcp__coanda__propose_goals', goal: 'Ship it' } as never)
+  expect(await ui.find({ type: 'Text', text: /^SET UP YOUR GOALS$/ })).toBeDefined()
   await ui.unmount()
 })
 
-test('FR-2 c2: 1 to 3 Lanes are kept, each with an outcome, an optional end date and its own id', async ($, on) => {
-  const { ui, saved } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
-  await ui.press({ key: 'setup-next' }) // Skip the goals file: the Lanes step
-  // The end date first, then Enter in the outcome field adds the Lane.
-  const add = async (lane: string, end = '') => {
-    await ui.input({ key: 'setup-end', text: end, kind: 'change' })
-    await ui.input({ key: 'setup-lane', text: lane, kind: 'submit' })
+test('goalsMessage: each ask names the file and the format; "find" in the demo names its folder only', () => {
+  for (const kind of ['setup', 'change', 'fix'] as const) {
+    const text = goalsMessage(kind, GOALS_PATH)
+    expect(text).toContain(GOALS_PATH)
+    expect(text).toContain('**Lane 1 — ')
   }
+  // "Find" shows its result through propose_goals and writes nothing before "Save these".
+  expect(goalsMessage('find', GOALS_PATH)).toContain('propose_goals')
+  expect(goalsMessage('find', GOALS_PATH)).toContain('Do not write')
+  expect(goalsMessage('find', GOALS_PATH)).toContain('my files')
+  const demo = goalsMessage('find', '/demo/goals.md', '/demo')
+  expect(demo).toContain('the folder /demo and nowhere else')
+  expect(demo).not.toContain('my files')
+})
 
-  await add('portfolio live', '2026-12-14')
-  await add('get hired', 'before spring')
-  await add('write weekly')
-  await add('a fourth one')
-  const lanes = (saved.setup as { lanes: { id: string; outcome: string; endDay?: string; endText?: string }[] }).lanes
-  expect(lanes.map(l => l.outcome)).toEqual(['portfolio live', 'get hired', 'write weekly'])
-  expect(lanes[0]).toMatchObject({ endDay: '2026-12-14' })
-  // The Setup list writes the end the way the Primary row does (this test's clock is in 1970, so the year shows).
-  expect(await texts(ui)).toContain('1. portfolio live · by 14 Dec 2026')
-  expect(await texts(ui)).toContain('2. get hired · by before spring')
-  expect(lanes[1]).toMatchObject({ endText: 'before spring' })
-  expect(new Set(lanes.map(l => l.id)).size).toBe(3)
-  expect(await texts(ui)).toContain('3 Lanes is the most')
-  // An id is never reused: remove the first, add another, no id repeats.
-  const gone = lanes[0]!.id
-  await ui.press({ key: 'setup-lane-remove-0' })
-  await add('learn to draw')
-  const after = (saved.setup as { lanes: { id: string }[] }).lanes
-  expect(after).toHaveLength(3)
-  expect(after.map(l => l.id)).not.toContain(gone)
+test('Setup: "Set up with Claude" sends one message, shows "Asking Claude", and the goals show when Claude has written the file', async ($, on) => {
+  const own = { setup: undefined, files: {} as Record<string, string>, env: { HOME: '/home/n' } }
+  const { ui, sent, model } = await bandOver($, on, own)
+
+  await ui.press({ key: 'lamp-pull' })
+  await ui.press({ key: 'setup-ask' })
+  expect(sent).toHaveLength(1)
+  expect(sent[0]).toContain(GOALS_PATH)
+  expect(await texts(ui)).toContain('Asking Claude about your goals and Lanes…')
+  expect(await setupButtons(ui)).toEqual(['Skip for now'])
+  // A second press while waiting sends nothing (there is no button, and a stray press is refused).
+  await ui.press({ key: 'setup-ask' }).catch(() => undefined)
+  expect(sent).toHaveLength(1)
+
+  // Claude's turn ends with a question and no file yet: still waiting.
+  model.answer = 'What is the one thing that counts today?'
+  await done($, 't1', 'What is the one thing that counts today?')
+  expect(await texts(ui)).toContain('Asking Claude about your goals and Lanes…')
+
+  // Claude writes the file; its turn ends: the goals are shown to confirm.
+  own.files[GOALS_PATH] = GOALS_TEXT
+  await done($, 't2', 'Written.')
+  expect(await texts(ui)).toContain('Goal    Ship the v0.1 install')
+  expect(await texts(ui)).not.toContain('Asking Claude')
   await ui.unmount()
 })
 
-test('FR-2 c2: a bare label such as "Lane 2" is refused with a hint to write its outcome', async ($, on) => {
-  const { ui, saved } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
+test('a refused send never breaks the band: "Asking Claude" shows and Skip for now still works', async ($, on) => {
+  const { ui, sent } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' }, submitFails: true })
 
-  await ui.press({ key: 'setup-next' })
-  await ui.input({ key: 'setup-lane', text: 'Lane 2', kind: 'submit' })
-  expect(await texts(ui)).toContain('a label, not an outcome')
-  // The hint's example carries no date, so a typed end date is not shown twice.
-  expect(await texts(ui)).not.toContain('portfolio live by 14 Dec')
-  expect(saved.setup).toBeUndefined()
-  expect(checkLane('Proof', '', 'x', [])).toMatchObject({ ok: false })
-  expect(checkLane('Lane 2: Proof', '', 'x', [])).toMatchObject({ ok: false })
-  expect(checkLane('Lane 2: portfolio live', '', 'x', [])).toMatchObject({ ok: true })
+  await ui.press({ key: 'setup-ask' })
+  expect(sent).toHaveLength(1)
+  expect(await texts(ui)).toContain('Asking Claude')
+  await ui.press({ key: 'setup-skip' })
+  expect(await ui.find({ type: 'Text', text: /^SET UP YOUR GOALS$/ })).toBeUndefined()
   await ui.unmount()
 })
 
-test('FR-2 c3: the Lanes are kept across sessions', async ($, on) => {
-  const { ui, restart } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
+test('Setup: "Change" asks Claude about the file already there; "Skip for now" ends the wait', async ($, on) => {
+  const { ui, sent } = await bandOver($, on, { setup: undefined, files: { [GOALS_PATH]: GOALS_TEXT }, env: { HOME: '/home/n' } })
 
-  await ui.press({ key: 'setup-next' })
-  await ui.input({ key: 'setup-lane', text: 'portfolio live', kind: 'submit' })
-  // A new session before the setup was finished: the Setup moment is back with its Lane kept.
-  await restart()
-  expect(await texts(ui)).toContain('1. portfolio live')
+  await ui.press({ key: 'setup-change' })
+  expect(sent[0]).toContain('change my goals')
+  expect(await texts(ui)).toContain('Asking Claude')
+  await done($, 't1', 'What would you like to change?')
+  expect(await texts(ui)).toContain('Goal    Ship the v0.1 install')
+  await ui.press({ key: 'setup-change' })
+  await ui.press({ key: 'setup-skip' })
+  expect(await ui.find({ type: 'Text', text: /^SET UP YOUR GOALS$/ })).toBeUndefined()
   await ui.unmount()
 })
 
-test('FR-1: typed text survives a redraw while the ticks run', async ($, on) => {
-  const { ui, restart } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
+test('/coanda-demo: "Find them for me" tells Claude to look only in the demo folder', async ($, on) => {
+  const own = { setup: MINE.setup, docs: { cards: MINE.cards, primary: MINE.primary }, files: { [GOALS_PATH]: GOALS_TEXT }, env: { HOME: '/home/n' } }
+  const { ui, sent } = await bandOver($, on, own)
 
-  await ui.press({ key: 'setup-next' })
-  await ui.input({ key: 'setup-lane', text: 'half a Lane', kind: 'change' })
-  await restart() // the session start redraws the band and re-reads the store
-  expect(JSON.stringify(await ui.drawn())).toContain('half a Lane')
+  await $.command.run({ command: 'coanda-demo' } as never)
+  await ui.press({ key: 'lamp-pull' })
+  await ui.press({ key: 'setup-find' })
+  expect(sent).toHaveLength(1)
+  expect(sent[0]).toContain('the folder /home/n/.claude/plugins/data/coanda/demo and nowhere else')
+  expect(sent[0]).toContain('/home/n/.claude/plugins/data/coanda/demo/goals.md')
+  expect(sent[0]).not.toContain('my files')
   await ui.unmount()
 })
 
-test('/coanda-setup opens Setup again at step 1, with what was kept; Skip or Done closes it', async ($, on) => {
-  const { ui, commands, saved } = await bandOver($, on, { setup: SETUP_FILE('/data/goals.md'), files: { '/data/goals.md': 'Ship the intake form\n' }, env: { HOME: '/home/n' } })
+test('Setup: a goals file that exists and cannot be read says so with its path', async ($, on) => {
+  const { ui } = await bandOver($, on, { setup: undefined, files: {}, unreadable: [GOALS_PATH], env: { HOME: '/home/n' } })
 
-  expect(commands).toEqual(['coanda-setup', 'coanda-specimen', 'coanda-grid'])
-  expect(await primaryOf(ui)).toBe('◎ Ship the intake form')
+  expect(await texts(ui)).toContain(`I couldn't read ${GOALS_PATH}.`)
+  expect(await setupButtons(ui)).toEqual(['Ask Claude to fix it', 'Skip for now'])
+  await ui.unmount()
+})
+
+test('Setup: CLAUDE_CONFIG_DIR moves the goals file', async ($, on) => {
+  const { ui } = await bandOver($, on, { setup: undefined, files: { '/cfg/goals.md': GOALS_TEXT }, env: { HOME: '/home/n', CLAUDE_CONFIG_DIR: '/cfg' } })
+
+  expect(await texts(ui)).toContain('Goal    Ship the v0.1 install')
+  await ui.unmount()
+})
+
+test('Setup: with no home directory nothing is read and it says nothing was found', async ($, on) => {
+  const { ui, reads } = await bandOver($, on, { setup: undefined, files: {}, env: {} })
+
+  expect(await texts(ui)).toContain('A Goal is the one thing that counts today.')
+  expect(reads).toEqual([])
+  await ui.unmount()
+})
+
+test('/coanda-setup opens Setup again with the goals file read afresh; "Looks right" closes it', async ($, on) => {
+  const { ui, commands, saved } = await bandOver($, on, { setup: SETUP_FILE('/data/goals.md'), files: { '/data/goals.md': GOALS_TEXT }, env: { HOME: '/home/n' } })
+
+  expect(commands).toEqual(['coanda-setup', 'coanda-specimen', 'coanda-demo', 'coanda-grid'])
+  expect(await primaryOf(ui)).toBe('◎ Ship the v0.1 install')
   await $.command.run({ command: 'coanda-setup' } as never)
-  expect(await texts(ui)).toContain('SETUP · 1 OF 2')
-  expect(await texts(ui)).toContain('Reading: /data/goals.md')
+  expect(await texts(ui)).toContain('SET UP YOUR GOALS')
+  expect(await texts(ui)).toContain('Goal    Ship the v0.1 install')
   expect(await primaryOf(ui)).toBeUndefined()
 
-  await ui.press({ key: 'setup-next' }) // Next: a file is kept
-  expect(await texts(ui)).toContain('SETUP · 2 OF 2')
-  await ui.press({ key: 'setup-next' }) // Done
-  expect(await ui.find({ type: 'Text', text: /^SETUP ·/ })).toBeUndefined()
-  expect(await primaryOf(ui)).toBe('◎ Ship the intake form')
-  // Nothing kept was lost on the way.
+  await ui.press({ key: 'setup-keep' })
+  expect(await ui.find({ type: 'Text', text: /^SET UP YOUR GOALS$/ })).toBeUndefined()
+  expect(await primaryOf(ui)).toBe('◎ Ship the v0.1 install')
   expect(saved.setup).toMatchObject({ focus: { kind: 'file', path: '/data/goals.md' } })
   await ui.unmount()
 })
@@ -812,7 +933,7 @@ test('the Primary typed in the band is kept for today; tomorrow the band asks ag
   await ui.press({ key: 'primary-set' })
   expect(saved.primary).toMatchObject({ v: 1, text: 'Ship the band', day: '2026-11-12' })
   expect(await primaryOf(ui)).toBe('◎ Ship the band')
-  expect(await ui.find({ type: 'Text', text: /^PRIMARY$/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^SET YOUR PRIMARY$/ })).toBeUndefined()
 
   // The next day it no longer counts: the PRIMARY row is back; Enter in the field sets it too.
   await clock!.advance(24 * 3600 * 1000)
@@ -839,6 +960,9 @@ test('/coanda-grid shows the grid page, then hides it again', async ($, on) => {
   await $.command.run({ command: 'coanda-grid' } as never)
   expect(await texts(ui)).toContain('COANDA GRID · run /coanda-grid again to hide')
   expect(await texts(ui)).toContain('V2 paddingY steps on a tinted box (height of the box minus one text line = 2 x step)')
+  // The first measure of the rebuild plan: the heading over the frame's line, the fields beside Set.
+  expect(await texts(ui)).toContain('SET YOUR PRIMARY · M1 top 0, no background')
+  expect(await texts(ui)).toContain('SET YOUR PRIMARY · M4 top -1, white background')
   await $.command.run({ command: 'coanda-grid' } as never)
   expect(await texts(ui)).not.toContain('COANDA GRID · run /coanda-grid again to hide')
   await ui.unmount()
@@ -852,7 +976,7 @@ test('Setup opens with the lamp: dark with one button, pulled it plays once, the
   expect(await drawn()).toContain('"key":"lamp-layer"')
   expect(await drawn()).toContain('"key":"lamp-pull"')
   expect(await drawn()).toContain('"position":"absolute"')
-  expect(await texts(ui)).toContain('SETUP · 1 OF 2')
+  expect(await texts(ui)).toContain('SET UP YOUR GOALS')
 
   // Pulled: the button goes; the native cover and the layer are both there, so Setup never shows in between.
   await ui.press({ key: 'lamp-pull' })
@@ -869,7 +993,7 @@ test('Setup opens with the lamp: dark with one button, pulled it plays once, the
   await clock!.advance(3000)
   expect(await drawn()).not.toContain('"key":"lamp-layer"')
   expect(await drawn()).not.toContain('"key":"lamp-stage"')
-  expect(await texts(ui)).toContain('SETUP · 1 OF 2')
+  expect(await texts(ui)).toContain('SET UP YOUR GOALS')
 
   // Every time Setup runs: /coanda-setup plays it again.
   await $.command.run({ command: 'coanda-setup' } as never)
@@ -939,7 +1063,7 @@ function nodesOf(root: unknown): { node: Drawn; above: Drawn[] }[] {
   return out
 }
 
-const QUIET = /-later$|^asked-dismiss$|^primary-details$|^setup-lane-remove-/
+const QUIET = /-later$|^asked-dismiss$|^primary-details$|^setup-skip$/
 
 // What every drawn moment must hold; returns the broken points, empty when all hold.
 function mustHold(root: unknown): string[] {
@@ -964,11 +1088,11 @@ function mustHold(root: unknown): string[] {
     }
     if (node.type === 'Button') {
       const key = String(props.key)
-      const isQuiet = QUIET.test(key) || props.label === 'Skip'
+      const isQuiet = QUIET.test(key)
       // Quiet exits: plain and dim (B5). Everything else: a native primary or secondary (B1, B2).
       if (isQuiet && !(props.plain === true && props.dimColor === true)) broken.push(`${key} is not a plain, dim quiet exit`)
       if (!isQuiet && props.variant !== 'primary' && props.variant !== 'secondary') broken.push(`${key} is not a native button`)
-      if (['primary-set', 'setup-file-use', 'setup-lane-add'].includes(key) && props.variant !== 'primary') broken.push(`${key} is not primary`)
+      if (['primary-set', 'setup-keep'].includes(key) && props.variant !== 'primary') broken.push(`${key} is not primary`)
       // No button inside a painted contour (Nicolas, 16:57).
       // The lamp's one button is the exception: it sits on the dark layer and needs an edge to be seen (14 Nov).
       if (key !== 'lamp-pull' && above.some(box => box.props?.borderColor !== undefined)) broken.push(`${key} sits inside a painted contour`)
@@ -995,10 +1119,7 @@ test('must hold on screen: every moment keeps the settled layout, buttons and fi
   await check('guessed question')
   await ui.press({ key: 'asked-dismiss' })
   await $.command.run({ command: 'coanda-setup' } as never)
-  await check('setup step 1')
-  await ui.press({ key: 'setup-next' })
-  await ui.input({ key: 'setup-lane', text: 'portfolio live', kind: 'submit' })
-  await check('setup step 2 with a Lane')
+  await check('setup, goals found')
   await ui.unmount()
 
   // The guard itself catches a regression.
@@ -1134,7 +1255,8 @@ test('a decision card: its options and consequences show, one press sends one me
   expect((await ui.find({ type: 'Text', text: /Band or panel/ }))?.text).toBe('Band or panel?')
   // The system's badge: a mark and words, padded as a pill.
   expect((await ui.find({ type: 'Text', text: /Hard to undo/ }))?.text).toBe('⚠ Hard to undo')
-  expect((await ui.find({ type: 'Text', text: /^then Band$/ }))?.text).toBe('then Band')
+  // A consequence is one line under the buttons: the option's name, then what follows from it.
+  expect((await ui.find({ type: 'Text', text: /^Band: then Band$/ }))?.text).toBe('Band: then Band')
   // The options, the quiet exit, the Primary row's Details: no "Something else", no generic "go".
   expect(await buttonsOf(ui)).toEqual(['Band', 'Panel', 'Later', 'Details'])
   // Only Coanda's row: the host's default drawing of it (an engine node) is not drawn under ours.
@@ -1208,7 +1330,8 @@ test('a guessed question is stamped inferred; a suggestion sends its prompt, "No
 })
 
 test('NOW comes from the task list: "<step> · step N of M" while working, "Idle · <outcome>" once finished', async ($, on) => {
-  const { ui } = await bandOver($, on, READY)
+  // A Primary is set, so the status row shows (with none, the band is the "Set your Primary" step).
+  const { ui } = await bandOver($, on, { setup: SETUP_FILE('/data/goals.md'), files: { '/data/goals.md': 'Ship the band\n' }, env: { HOME: '/home/n' } })
 
   await $.tool.call({ tool: 'mcp__ccd_turn__update_plan', items: [{ content: 'Scan', status: 'in_progress' }, { content: 'Build', status: 'pending' }] } as never)
   await $.tool.call({ tool: 'Edit', file_path: '/x/register.tsx' } as never)
@@ -1238,5 +1361,176 @@ test('a reload that eats turn.complete: the answer kept during the turn brings i
   await restart()
   await settle(async () => (await question()) !== undefined)
   expect((await question())?.text).toBe('Keep the new layout?')
+  await ui.unmount()
+})
+
+// ---- /coanda-demo: start from zero, back up, restore (v0.1.43) -----------------------------------
+
+const MINE_CARD = cardOf('mine-1', { sessionId: 's1', question: 'My real question?' })
+const MINE = {
+  setup: SETUP_FILE('/real/FOCUS.md'),
+  cards: { v: 1, items: [MINE_CARD] },
+  primary: { v: 1, day: '2026-11-14', text: 'My real Primary', setAt: 5 },
+}
+
+test('/coanda-demo: backs up the three stored items, starts from zero with the lamp; leaving restores them exactly', async ($, on) => {
+  const own = { setup: MINE.setup, docs: { cards: MINE.cards, primary: MINE.primary }, files: { '/real/FOCUS.md': '## Today\n- **Primary (14 Nov, N): real goal.**\n' }, env: { HOME: '/home/n' } }
+  const { ui, saved, writes, commands } = await bandOver($, on, own)
+  expect(await primaryOf(ui)).toBe('◎ real goal.')
+
+  await $.command.run({ command: 'coanda-demo' } as never)
+  // The three items are kept in a backup (a store key and a file in the demo folder) before anything is cleared.
+  expect(saved.demoBackup).toMatchObject({ v: 1, setup: MINE.setup, cards: MINE.cards, primary: MINE.primary })
+  const file = writes.find(w => w.path === '/home/n/.claude/plugins/data/coanda/demo/backup.json')
+  expect(JSON.parse(file!.text)).toMatchObject({ setup: MINE.setup, cards: MINE.cards, primary: MINE.primary })
+  // The band starts from zero: nothing stored, Setup shows (with the lamp), his goal and cards are hidden.
+  expect(saved.setup).toBeUndefined()
+  expect(saved.cards).toBeUndefined()
+  expect(saved.primary).toBeUndefined()
+  expect(await texts(ui)).toContain('SET UP YOUR GOALS')
+  expect(await ui.find({ key: 'lamp-pull' })).toBeDefined()
+  expect(await texts(ui)).not.toContain('real goal')
+  expect(await texts(ui)).not.toContain('My real question?')
+
+  // Leaving restores them exactly, and drops the backup.
+  await ui.press({ key: 'demo-exit' })
+  expect(saved.setup).toEqual(MINE.setup)
+  expect(saved.cards).toEqual(MINE.cards)
+  expect(saved.primary).toEqual(MINE.primary)
+  expect(saved.demoBackup).toBeUndefined()
+  expect(await primaryOf(ui)).toBe('◎ real goal.')
+  expect(await texts(ui)).toContain('My real question?')
+  // His goals file was only ever read, never written: every write went to the demo folder.
+  expect(writes.length).toBeGreaterThan(0)
+  expect(writes.every(w => w.path.startsWith('/home/n/.claude/plugins/data/coanda/demo/'))).toBe(true)
+  expect(commands).toContain('coanda-demo')
+  await ui.unmount()
+})
+
+test('/coanda-demo: an empty store is restored as empty (keys removed, not left as nulls)', async ($, on) => {
+  const { ui, saved } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
+
+  await $.command.run({ command: 'coanda-demo' } as never)
+  expect(saved.demoBackup).toMatchObject({ v: 1, setup: null, cards: null, primary: null })
+  await ui.press({ key: 'demo-exit' })
+  expect('setup' in saved || 'cards' in saved || 'primary' in saved || 'demoBackup' in saved).toBe(false)
+  await ui.unmount()
+})
+
+test('/coanda-demo after a crash offers "Restore my data"; it never starts over the first backup', async ($, on) => {
+  // A new session after a crash: the backup is still in the store, the demo's own data stands in the real keys.
+  const backup = { v: 1, savedAt: 1, ...MINE }
+  const demoSetup = SETUP_FILE('/demo/goals.md')
+  const { ui, saved, toasts } = await bandOver($, on, { setup: demoSetup, docs: { demoBackup: backup }, files: {}, env: { HOME: '/home/n' } })
+  expect(toasts.join('\n')).toContain('/coanda-demo')
+
+  await $.command.run({ command: 'coanda-demo' } as never)
+  expect(saved.demoBackup).toEqual(backup)
+  expect(await ui.find({ key: 'demo-restore' })).toBeDefined()
+  expect(saved.setup).toEqual(demoSetup)
+  await ui.press({ key: 'demo-restore' })
+  expect(saved.setup).toEqual(MINE.setup)
+  expect(saved.cards).toEqual(MINE.cards)
+  expect(saved.primary).toEqual(MINE.primary)
+  expect(saved.demoBackup).toBeUndefined()
+  await ui.unmount()
+})
+
+// ---- /coanda-demo step 2: the demo goals file and Reset to zero (v0.1.46) --------------------------
+
+const DEMO_GOALS = '/home/n/.claude/plugins/data/coanda/demo/goals.md'
+
+test('/coanda-demo: Setup proposes a demo goals file (his path is never offered); Reset to zero starts over, his data stays saved', async ($, on) => {
+  const own = { setup: MINE.setup, docs: { cards: MINE.cards, primary: MINE.primary }, files: { '/real/FOCUS.md': '## Today\n- **Primary (14 Nov, N): real goal.**\n' }, env: { HOME: '/home/n' } }
+  const { ui, saved, writes } = await bandOver($, on, own)
+
+  await $.command.run({ command: 'coanda-demo' } as never)
+  // Step 1 of Setup: no field for a path (so no real path can be typed), one button proposes the demo file.
+  expect(await ui.findAll({ type: 'Input' })).toHaveLength(0)
+  expect(await buttonsOf(ui)).toContain('Create a demo goals file')
+  // The demo starts with no goals: the file is emptied, so Setup found nothing; the sample is not created yet.
+  expect(writes.filter(w => w.path === DEMO_GOALS).every(w => w.text === '')).toBe(true)
+
+  await ui.press({ key: 'lamp-pull' })
+  await ui.press({ key: 'demo-file' })
+  const file = writes.filter(w => w.path === DEMO_GOALS).at(-1)
+  expect(file?.text).toContain('Lane 1')
+  expect(saved.setup).toMatchObject({ focus: { kind: 'file', path: DEMO_GOALS } })
+  // The demo file is now where Setup looks: its goals are shown to confirm.
+  expect(await texts(ui)).toContain('Goal    write the first draft of the sample report')
+
+  // Go through Setup, then Reset to zero: the stored demo items are cleared, the file rewritten, Setup is back with the lamp.
+  await ui.press({ key: 'setup-keep' })
+  expect(await primaryOf(ui)).toBeDefined()
+  const before = writes.filter(w => w.path === DEMO_GOALS).length
+  await ui.press({ key: 'demo-reset' })
+  expect(writes.filter(w => w.path === DEMO_GOALS).length).toBe(before + 1)
+  expect(writes.filter(w => w.path === DEMO_GOALS).at(-1)?.text).toBe('') // back to zero: no goals
+  expect(await texts(ui)).toContain('A Goal is the one thing that counts today.')
+  expect(saved.setup).toBeUndefined()
+  expect(await texts(ui)).toContain('SET UP YOUR GOALS')
+  expect(await ui.find({ key: 'lamp-pull' })).toBeDefined()
+  // His own data is still in the backup, and leaving brings it back exactly.
+  expect(saved.demoBackup).toMatchObject({ setup: MINE.setup, cards: MINE.cards, primary: MINE.primary })
+  await ui.press({ key: 'demo-exit' })
+  expect(saved.setup).toEqual(MINE.setup)
+  expect(saved.cards).toEqual(MINE.cards)
+  expect(saved.primary).toEqual(MINE.primary)
+  expect(writes.every(w => w.path.startsWith('/home/n/.claude/plugins/data/coanda/demo/'))).toBe(true)
+  await ui.unmount()
+})
+
+test('/coanda-demo: Setup looks only in the demo folder, never at his own ~/.claude/goals.md', async ($, on) => {
+  const own = { setup: MINE.setup, docs: { cards: MINE.cards, primary: MINE.primary }, files: { [GOALS_PATH]: GOALS_TEXT, '/real/FOCUS.md': GOALS_TEXT }, env: { HOME: '/home/n' } }
+  const { ui, reads } = await bandOver($, on, own)
+
+  await $.command.run({ command: 'coanda-demo' } as never)
+  expect(await texts(ui)).toContain('A Goal is the one thing that counts today.')
+  expect(await texts(ui)).not.toContain('Ship the v0.1 install')
+  await $.command.run({ command: 'coanda-setup' } as never)
+  // Reads after the demo started: none of them is his goals file or his saved path.
+  const afterStart = reads.slice(reads.lastIndexOf('/real/FOCUS.md') + 1)
+  expect(afterStart).not.toContain(GOALS_PATH)
+  await ui.unmount()
+})
+
+// ---- /coanda-demo step 3: sample questions, live (v0.1.48) --------------------------------------------
+
+test('/coanda-demo: sample question buttons add a small choice, a big choice and a guessed question; a press sends nothing; leaving drops them', async ($, on) => {
+  const own = { setup: MINE.setup, docs: { cards: { v: 1, items: [] }, primary: MINE.primary }, files: {}, env: { HOME: '/home/n' }, now: THEN }
+  const { ui, saved, sent, clock } = await bandOver($, on, own)
+  await $.command.run({ command: 'coanda-demo' } as never)
+  await ui.press({ key: 'setup-skip' }) // Setup skipped: the plain band, with the strip
+
+  // Small choice: a card (through addCard, so it is stored), two answers with their consequences, Later.
+  await ui.press({ key: 'demo-ask-small' })
+  expect(await texts(ui)).toContain('Rename fill2 to fillSafely?')
+  expect(await texts(ui)).not.toContain('⚠ Hard to undo')
+  expect(await buttonsOf(ui)).toEqual(expect.arrayContaining(['Rename to fillSafely', 'Keep fill2', 'Later']))
+  expect((saved.cards as { items: unknown[] }).items).toHaveLength(1)
+  // A press in the demo sends nothing to the chat: it shows "Sent" for a moment, then the band is back.
+  await ui.press({ key: (await keyOf(ui, 'Keep fill2'))! })
+  expect(sent).toEqual([])
+  expect(await texts(ui)).toContain('✓ Keep fill2')
+  await clock!.advance(2500)
+  expect(await texts(ui)).not.toContain('Rename fill2 to fillSafely?')
+
+  // Big choice: hard to undo.
+  await ui.press({ key: 'demo-ask-big' })
+  expect(await texts(ui)).toContain('Where should Lanes live?')
+  expect(await texts(ui)).toContain('⚠ Hard to undo')
+
+  // Guessed question: stamped inferred, and an answer sends nothing either.
+  await ui.press({ key: 'demo-ask-guessed' })
+  await ui.press({ key: (await keyOf(ui, 'Later'))! }) // the big card steps aside, the guess shows
+  expect(await texts(ui)).toContain('Is the layout right now?')
+  expect(await texts(ui)).toContain('inferred')
+  await ui.press({ key: (await keyOf(ui, 'Yes'))! })
+  expect(sent).toEqual([])
+
+  // Leaving brings his cards back and none of the samples.
+  await ui.press({ key: 'demo-exit' })
+  expect(saved.cards).toEqual({ v: 1, items: [] })
+  expect(await texts(ui)).not.toContain('Where should Lanes live?')
   await ui.unmount()
 })

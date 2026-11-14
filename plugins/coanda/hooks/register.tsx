@@ -1,16 +1,19 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { BandAction, Pending, Snapshot } from '../types'
-import { SETUP_STEPS, bandModel } from './band'
+import { bandModel } from './band'
 import { ASK_DECISION, answer, toCard } from './cards'
-import { NO_FOCUS, UNREADABLE_FOCUS, checkFocusPath, checkLane, newLaneId, parseFocus, primaryText } from './focus'
-import { homeDirectory, readFocusFile } from './io'
+import { NO_FOCUS, UNREADABLE_FOCUS, goalsState, parseFocus } from './focus'
+import { PROPOSE_GOALS, goalsMessage, proposalMessage, toProposal } from './goals-ask'
+import { goalsFile, readFocusFile } from './io'
 import { askReply } from './model'
 import { questionToShow, toAsked } from './next'
 import type { PlanInput } from './plan'
 import { applyPlan, noteCall } from './plan'
 import { blankOf } from './question'
 import { dayKey } from './time'
+import { renderDemo, renderDemoOffer, renderDemoStrip } from './demo'
+import { addSample, backupFound, demoFolder, demoGoalsPath, resetDemo, restoreMine, startDemo, writeDemoGoals } from './demo-run'
 import { renderBand, renderSpecimen } from './render'
 import { renderGrid } from './grid'
 import { renderLab } from './lab'
@@ -47,6 +50,10 @@ import {
   getAsked,
   getCards,
   getDetailsOpen,
+  getGoalsAsking,
+  updateGoalsAsking,
+  getGoalsProposal,
+  updateGoalsProposal,
   getDoneLast,
   getFocus,
   getLastPrompt,
@@ -57,8 +64,9 @@ import {
   getSetupDraft,
   getSetupOpen,
   getSetupSeen,
-  getSetupStep,
   getSteps,
+  getDemo,
+  getDemoMode,
   getSpecimen,
   getSuggestions,
   getTypedPrimary,
@@ -73,13 +81,14 @@ import {
   updateSent,
   updateSetupDraft,
   updateSetupOpen,
-  updateSetupStep,
   updateSteps,
+  updateDemo,
+  updateDemoMode,
   updateSpecimen,
   updateSuggestions,
   NO_DRAFT,
 } from './state'
-import { NO_SETUP, addCard, closeCard, deferCard, finishSetup, loadSetup, loadTypedPrimary, readFocusSource, restore, setFocus, setLanes, setTypedPrimary } from './store'
+import { NO_SETUP, addCard, closeCard, deferCard, finishSetup, loadSetup, loadTypedPrimary, readFocusSource, restore, setFocus, setTypedPrimary } from './store'
 
 // The shell's wiring: one handler per host event, each a short run of named calls; snapshot()
 // gathers what the band reads; dispatch() is the only place a press is carried out.
@@ -114,13 +123,30 @@ async function fillSafely($: Pick<EngineInterface, 'prompt'>, text: string) {
   await $.prompt.fill({ text: added, mode: hasDraft ? 'append' : 'replace', ...(decorations ? { decorations } : {}) })
 }
 
-// What the Focus source says, read again; then the band redraws. With no source saved in setup,
-// nothing is read from disk. A file that cannot be read becomes plain words in its row.
-async function refreshFocus($: State & Pick<EngineInterface, 'fs' | 'store' | 'ui' | 'clock'>) {
+// Where the goals are read from: the path saved in an earlier setup, else the one goals file
+// (~/.claude/goals.md); while the demo runs, only the demo folder's file, never the person's own.
+// `isSaved` is false for the default, which may simply not exist yet.
+async function goalsSource($: State & Pick<EngineInterface, 'store' | 'env'>): Promise<{ path: string | null; isSaved: boolean }> {
+  if ((await getDemoMode($)) === 'on') return { path: await demoGoalsPath($), isSaved: false }
+
+  const saved = await readFocusSource($)
+  if (saved !== null) return { path: saved, isSaved: true }
+
+  try {
+    return { path: await goalsFile($), isSaved: false }
+  } catch {
+    return { path: null, isSaved: false }
+  }
+}
+
+// What the goals file says, read again; then the band redraws. A saved path that cannot be read, or
+// a goals file that exists and cannot be read, becomes plain words; a goals file that is not there
+// yet is "nothing found", not an error.
+async function refreshFocus($: State & Pick<EngineInterface, 'fs' | 'store' | 'ui' | 'clock' | 'env'>) {
   let found = NO_FOCUS
   try {
-    const path = await readFocusSource($)
-    if (path !== null) found = parseFocus(await readFocusFile($, path), await $.clock.now())
+    const { path, isSaved } = await goalsSource($)
+    if (path !== null && (isSaved || (await $.fs.exists(path)))) found = parseFocus(await readFocusFile($, path), await $.clock.now())
   } catch {
     found = UNREADABLE_FOCUS
   }
@@ -138,7 +164,7 @@ async function claim($: State, label: string) {
 
 // Everything the band reads, gathered once per draw. The fields no stage has filled yet carry their
 // empty value.
-async function snapshot($: State & Pick<EngineInterface, 'clock' | 'session'>, isWorking: boolean): Promise<Snapshot> {
+async function snapshot($: State & Pick<EngineInterface, 'clock' | 'session' | 'env' | 'store'>, isWorking: boolean): Promise<Snapshot> {
   const asked = await getAsked($)
   const now = await $.clock.now()
   // The Primary typed in the band counts only on the day it was set.
@@ -150,11 +176,14 @@ async function snapshot($: State & Pick<EngineInterface, 'clock' | 'session'>, i
     now,
     sessionId: await $.session.id(),
     isWorking,
+    ...((await getDemoMode($)) === 'on' ? { demoGoals: await demoGoalsPath($) } : {}),
     setup: (await getSetupSeen($)) ?? NO_SETUP,
     setupOpen: await getSetupOpen($),
-    setupStep: await getSetupStep($),
     setupDraft: await getSetupDraft($),
     focus: await getFocus($),
+    goalsPath: (await goalsSource($)).path ?? '',
+    goalsAsking: await getGoalsAsking($),
+    goalsProposal: await getGoalsProposal($),
     sessionPrimary,
     cards: await getCards($),
     asked,
@@ -178,39 +207,36 @@ async function snapshot($: State & Pick<EngineInterface, 'clock' | 'session'>, i
 
 type Presser = Pick<EngineInterface, 'state' | 'store' | 'clock' | 'prompt' | 'ui' | 'fs' | 'env'>
 
+// Sends the person's message and does not wait for it: the docs call submit as `void`, and a turn of its own
+// starts "once the session is idle", so waiting would hold the band's handler for the whole turn (seen 14 Nov:
+// presses made meanwhile showed only after the next message). A refusal is dropped; the band was already updated.
+function submitAndGo($: Pick<EngineInterface, 'prompt'>, text: string) {
+  void $.prompt.submit({ text, asUser: true }).catch(() => undefined)
+}
+
 // A suggested answer to the inferred question: one press, one message.
 async function send($: Presser, text: string, label = text) {
   if (!(await claim($, label))) return
   await updateSuggestions($, () => [])
   await updateMoment($, () => 'other')
   await updateAsked($, () => null)
-  await $.prompt.submit({ text, asUser: true })
+  if ((await getDemoMode($)) === 'on') return demoSent($)
+  submitAndGo($, text)
 }
 
-// What the Setup moment says back under a field.
-async function noteFile($: Presser, fileNote: string) {
-  await updateSetupDraft($, d => ({ ...d, fileNote }))
+// In the demo a press sends nothing to the chat: "Sent" shows for a moment, then the band is back.
+async function demoSent($: Presser) {
+  $.clock.after(2000, async () => {
+    await updateSent($, () => null)
+    $.ui.invalidate('ui.render')
+  })
 }
 
-async function noteLane($: Presser, laneNote: string) {
-  await updateSetupDraft($, d => ({ ...d, laneNote }))
-}
-
-// "Use this file": the typed path is checked, the file read once to be sure, then kept in the setup.
-async function setupUseFile($: Presser) {
-  const checked = checkFocusPath((await getSetupDraft($)).file, await homeDirectory($))
-  if (!checked.ok) return noteFile($, checked.message)
-
-  let text: string
-  try {
-    text = await readFocusFile($, checked.value)
-  } catch {
-    return noteFile($, `That file cannot be read: ${checked.value}. Check the path, or skip.`)
-  }
-
-  await setFocus($, { kind: 'file', path: checked.value })
+// The demo's "Create a demo goals file": written in the demo folder, then kept as the goals file.
+async function demoCreateFile($: Presser) {
+  const path = await writeDemoGoals($)
+  await setFocus($, { kind: 'file', path })
   await refreshFocus($)
-  await noteFile($, `Kept. Your Primary there: ${primaryText(parseFocus(text))}.`)
 }
 
 // "Set": today's Primary, typed in the band; kept for today, the field emptied.
@@ -223,30 +249,55 @@ async function setPrimary($: Presser) {
   await updateSetupDraft($, d => ({ ...d, primary: '' }))
 }
 
-// "Add Lane": 1 to 3 Lanes are kept, each with an id made once.
-async function setupAddLane($: Presser) {
-  const draft = await getSetupDraft($)
-  const kept = (await getSetupSeen($))?.lanes ?? []
-  const made = checkLane(draft.lane, draft.end, newLaneId(await $.clock.now(), Math.random()), kept)
-  if (!made.ok) return noteLane($, made.message)
-
-  await setLanes($, [...kept, made.value])
-  await updateSetupDraft($, d => ({ ...d, lane: '', end: '', laneNote: '' }))
-}
-
-async function setupRemoveLane($: Presser, laneId: string) {
-  await setLanes($, ((await getSetupSeen($))?.lanes ?? []).filter(one => one.id !== laneId))
-}
-
-// "Skip" or "Done": the next step shows; after the last one the setup is finished and stays so.
-async function setupNext($: Presser) {
-  const step = await getSetupStep($)
-  if (step + 1 < SETUP_STEPS) return void (await updateSetupStep($, () => step + 1))
-
+// Setup is over: it stays closed. Used by "Looks right" and "Skip for now".
+async function finishSetupMoment($: Presser) {
   await finishSetup($, await $.clock.now())
+  await updateGoalsAsking($, () => false)
+  await updateGoalsProposal($, () => null)
   await updateLamp($, () => 'off')
   await updateSetupOpen($, () => false)
-  await updateSetupStep($, () => 0)
+}
+
+// A button that asks Claude about the goals file: the message goes out as the person's own, and the band
+// shows "Asking Claude" until the goals file has goals again (turn.complete reads it).
+async function goalsAsk($: Presser, ask: 'setup' | 'find' | 'change' | 'fix') {
+  if (await getGoalsAsking($)) return
+
+  const { path } = await goalsSource($)
+  if (path === null) return
+
+  await updateGoalsAsking($, () => true)
+  $.ui.invalidate('ui.render')
+  // In the demo, Claude looks only in the demo folder.
+  const onlyIn = (await getDemoMode($)) === 'on' ? await demoFolder($) : undefined
+  submitAndGo($, goalsMessage(ask, path, onlyIn))
+}
+
+// Save these / Change / Not these on Claude's proposal. Saving and changing go to Claude (D3: Coanda only reads
+// the file); the band waits ("Asking Claude") until the file holds the goals.
+async function goalsProposal($: Presser, what: 'save' | 'revise' | 'drop') {
+  const proposal = await getGoalsProposal($)
+  if (proposal === null) return
+
+  await updateGoalsProposal($, () => null)
+  if (what === 'drop') return
+
+  const { path } = await goalsSource($)
+  if (path === null) return
+
+  await updateGoalsAsking($, () => true)
+  $.ui.invalidate('ui.render')
+  submitAndGo($, proposalMessage(what, path, proposal))
+}
+
+// "Looks right": the goals file found is kept as the goals file, then Setup is finished.
+async function goalsKeep($: Presser) {
+  const { path } = await goalsSource($)
+  if (path === null) return
+
+  await setFocus($, { kind: 'file', path })
+  await refreshFocus($)
+  await finishSetupMoment($)
 }
 
 // The only place a press is carried out: one case per BandAction.
@@ -257,7 +308,8 @@ async function dispatch($: Presser, action: BandAction): Promise<void> {
     case 'pick':
       if (!(await claim($, action.option))) return
       await closeCard($, action.card.id, 'answered', await $.clock.now(), action.option)
-      await $.prompt.submit({ text: answer(action.card, action.option), asUser: true })
+      if ((await getDemoMode($)) === 'on') return demoSent($)
+      submitAndGo($, answer(action.card, action.option))
       return
     case 'later':
       return deferCard($, action.cardId, await $.clock.now())
@@ -273,18 +325,20 @@ async function dispatch($: Presser, action: BandAction): Promise<void> {
       return
     case 'setupType':
       await updateSetupDraft($, d => ({ ...d, [action.field]: action.value }))
-      if (action.submit) await (action.field === 'file' ? setupUseFile($) : action.field === 'primary' ? setPrimary($) : setupAddLane($))
+      if (action.submit) await setPrimary($)
       return
     case 'primarySet':
       return setPrimary($)
-    case 'setupFile':
-      return setupUseFile($)
-    case 'setupAddLane':
-      return setupAddLane($)
-    case 'setupRemoveLane':
-      return setupRemoveLane($, action.laneId)
-    case 'setupNext':
-      return setupNext($)
+    case 'demoFile':
+      return demoCreateFile($)
+    case 'goalsAsk':
+      return goalsAsk($, action.ask)
+    case 'goalsProposal':
+      return goalsProposal($, action.what)
+    case 'goalsKeep':
+      return goalsKeep($)
+    case 'setupSkip':
+      return finishSetupMoment($)
   }
 }
 
@@ -296,15 +350,20 @@ export const register: Register = on => {
     const ran = await next(e)
 
     await $.tool.register(ASK_DECISION)
+    await $.tool.register(PROPOSE_GOALS)
     await restore($)
     await loadSetup($)
+    await updateGoalsAsking($, () => false)
     // Setup is about to show for the first time: it opens with the lamp.
     if (((await getSetupSeen($)) ?? NO_SETUP).doneAt === null) await updateLamp($, () => 'dark')
     await loadTypedPrimary($)
+    // Claude closed in the middle of a demo: the person's data is in the backup until it is restored.
+    if ((await getDemoMode($)) === 'off' && (await backupFound($))) $.ui.toast('Your Coanda data is saved from a demo. Run /coanda-demo to restore it.')
     await refreshFocus($)
     $.clock.every(60000, () => void refreshFocus($))
     await $.command.register({ name: 'coanda-setup', description: "Open Coanda's Setup at step 1: your goals file and your Lanes" })
     await $.command.register({ name: 'coanda-specimen', description: 'Show or hide every drawing option of the band (for design checks)' })
+    await $.command.register({ name: 'coanda-demo', description: 'Walk through every screen of the band with example data, to correct each one live' })
     await $.command.register({ name: 'coanda-grid', description: 'Show or hide the grid page: rulers in cells, spacing steps, text sizes, contrast (for design checks)' })
 
     // A reload at the end of a turn loses its turn.complete: read the answer kept while it was written.
@@ -323,6 +382,19 @@ export const register: Register = on => {
     $.ui.toast(`New decision: ${card.question}`)
 
     return { result: 'Question added to the band. End your turn; the answer comes as a user message.' }
+  })
+
+  // Claude's proposal for the goals: shown in Setup (which opens if it was closed), saved only when the person agrees.
+  on('tool.call', { tool: `${OWN_TOOLS}propose_goals` }, async ($, e) => {
+    const proposal = toProposal(e)
+    if (typeof proposal === 'string') return { result: proposal }
+
+    await updateGoalsProposal($, () => proposal)
+    await updateGoalsAsking($, () => false)
+    await updateSetupOpen($, () => true)
+    $.ui.invalidate('ui.render')
+
+    return { result: 'Proposal shown in the band. End your turn; if the user presses "Save these" you get a message to write the file.' }
   })
 
   // The app's own task list feeds NOW (a tool fact); every other call counts toward the running step.
@@ -383,6 +455,12 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const ran = await next(e)
     if (e.agentId === undefined) await updateSent($, () => null)
+    // Claude's turn ended after Setup asked it: read the goals file; "Asking Claude" goes once it holds goals or is unreadable.
+    if (e.agentId === undefined && (await getGoalsAsking($))) {
+      await refreshFocus($)
+      if (goalsState(await getFocus($)) !== 'nothing') await updateGoalsAsking($, () => false)
+      $.ui.invalidate('ui.render')
+    }
 
     if (e.agentId === undefined && e.reason === 'answer' && e.answer.trim()) {
       const kept = await getPending($)
@@ -394,16 +472,42 @@ export const register: Register = on => {
     return ran
   })
 
-  // /coanda-setup: Setup shows again at step 1, over whatever the band showed, until Skip or Done.
-  // What was kept (the goals file, the Lanes) stays; only the typed drafts and notes are cleared.
+  // /coanda-setup: Setup shows again, over whatever the band showed, until "Looks right" or "Skip for now".
+  // What was kept stays; the goals file is read again so Setup shows what is there now.
   on('command.run', { command: 'coanda-setup' }, async $ => {
     await updateSetupDraft($, () => NO_DRAFT)
-    await updateSetupStep($, () => 0)
     await updateSetupOpen($, () => true)
+    await updateGoalsAsking($, () => false)
     await updateLamp($, () => 'dark')
+    await refreshFocus($)
     $.ui.invalidate('ui.render')
 
     return { text: 'Setup is open above the prompt.' }
+  })
+
+  // /coanda-demo: the real flow from zero. The person's data is backed up and cleared, then restored when the demo
+  // ends. Run again to leave. If a backup is found with the demo not running (Claude closed), it offers to restore.
+  on('command.run', { command: 'coanda-demo' }, async $ => {
+    if ((await getDemoMode($)) === 'on') {
+      const wrong = await restoreMine($)
+      if (wrong.length > 0) return { text: `Your data did not come back the same for: ${wrong.join(', ')}. The backup is kept; nothing was removed.` }
+      await updateDemo($, () => null)
+      await refreshFocus($)
+
+      return { text: 'Demo off. Your data is back.' }
+    }
+
+    if (await backupFound($)) {
+      await updateDemoMode($, () => 'offer')
+      $.ui.invalidate('ui.render')
+
+      return { text: 'Your data is saved from an earlier demo. Press "Restore my data" above the prompt.' }
+    }
+
+    await startDemo($)
+    $.ui.invalidate('ui.render')
+
+    return { text: 'Demo on: Setup starts from zero. Your own data is saved and comes back when you exit the demo.' }
   })
 
   // /coanda-specimen: a design check, on or off. While on, the band draws the specimen only.
@@ -527,6 +631,51 @@ export const register: Register = on => {
       )
     }
 
+    const demoMode = await getDemoMode($)
+    const leave = async () => {
+      const wrong = await restoreMine($)
+      if (wrong.length > 0) {
+        $.ui.toast(`Your data did not come back the same for: ${wrong.join(', ')}. The backup is kept.`)
+      } else {
+        await updateDemo($, () => null)
+        await refreshFocus($)
+      }
+      $.ui.invalidate('ui.render')
+    }
+
+    if (demoMode === 'offer') {
+      return renderDemoOffer(
+        { ui: $.ui.resolve(e), columns: e.props.bodyColumns, dispatch: async () => undefined },
+        {
+          note: '',
+          onRestore: leave,
+          onResume: async () => {
+            await updateDemoMode($, () => 'on')
+            $.ui.invalidate('ui.render')
+          },
+        },
+      )
+    }
+
+    const shownDemo = await getDemo($)
+    if (shownDemo !== null) {
+      return renderDemo(
+        { ui: $.ui.resolve(e), columns: e.props.bodyColumns, dispatch: async () => undefined },
+        {
+          index: shownDemo,
+          ...(demoMode === 'on' ? { backLabel: 'Back to the demo' } : {}),
+          onMove: async to => {
+            await updateDemo($, () => to)
+            $.ui.invalidate('ui.render')
+          },
+          onExit: async () => {
+            await updateDemo($, () => null)
+            $.ui.invalidate('ui.render')
+          },
+        },
+      )
+    }
+
     if (await getGrid($)) return renderGrid({ ui: $.ui.resolve(e), columns: e.props.bodyColumns, dispatch: async () => undefined })
 
     if (await getSpecimen($)) return renderSpecimen({ ui: $.ui.resolve(e), columns: e.props.bodyColumns, dispatch: async () => undefined })
@@ -536,10 +685,11 @@ export const register: Register = on => {
 
     // Setup's opening: the lamp, only on step 1 and only when the window leaves the rows for it (else no scrolling).
     const lamp = await getLamp($)
-    const rows = Math.min(LAMP_ROWS, e.props.maxRows)
+    const rows = Math.min(LAMP_ROWS, e.props.maxRows - (demoMode === 'on' ? 1 : 0))
 
-    if (model.kind === 'setup' && model.step === 0 && lamp !== 'off' && rows >= LAMP_MIN_ROWS) {
-      return renderLamp(renderBand(model, draw, rows), draw, {
+    let body: JSX.Element
+    if (model.kind === 'setup' && lamp !== 'off' && rows >= LAMP_MIN_ROWS) {
+      body = renderLamp(renderBand(model, draw, rows), draw, {
         phase: lamp,
         rows,
         onPull: async () => {
@@ -556,9 +706,35 @@ export const register: Register = on => {
           })
         },
       })
+    } else {
+      body = renderBand(model, draw)
     }
 
-    return renderBand(model, draw)
+    if (demoMode !== 'on') return body
+
+    const { Box } = draw.ui
+
+    return (
+      <Box flexDirection="column">
+        {renderDemoStrip(draw, {
+          onAsk: async kind => {
+            await addSample($, kind)
+            $.ui.invalidate('ui.render')
+          },
+          onReset: async () => {
+            await resetDemo($)
+            await refreshFocus($)
+            $.ui.invalidate('ui.render')
+          },
+          onScreens: async () => {
+            await updateDemo($, () => 0)
+            $.ui.invalidate('ui.render')
+          },
+          onExit: leave,
+        })}
+        {body}
+      </Box>
+    )
   }).catch(($, e, next) => {
     // Say why the band is missing instead of failing silently.
     $.ui.toast(`coanda band failed: ${JSON.stringify(next.error).slice(0, 300)}`)

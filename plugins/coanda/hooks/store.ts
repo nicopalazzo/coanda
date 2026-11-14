@@ -1,6 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { Card, DecisionStatus, Lane, Setup, TypedPrimary } from '../types'
+import type { Card, DecisionStatus, Setup, TypedPrimary } from '../types'
 import { close, supersede, toBottom } from './cards'
 import { focusSourceOf, toSetup } from './focus'
 import { getCards, updateCards, updateSetupSeen, updateTypedPrimary } from './state'
@@ -62,10 +62,6 @@ async function changeSetup($: Keeper, change: (now: Setup) => Setup) {
   const next = change(toSetup(await $.store.get('setup')) ?? NO_SETUP)
   await $.store.set('setup', next)
   await updateSetupSeen($, () => next)
-}
-
-export async function setLanes($: Keeper, lanes: Lane[]) {
-  await changeSetup($, now => ({ ...now, lanes }))
 }
 
 export async function setFocus($: Keeper, focus: Setup['focus']) {
