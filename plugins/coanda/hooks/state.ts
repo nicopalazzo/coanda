@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { StateDollar } from 'claude-code'
 
-import type { Asked, Card, FocusResult, GoalsProposal, Moment, Pending, Setup, SetupDraft, Step, Suggestion, TypedPrimary } from '../types'
+import type { Asked, Card, FocusResult, GoalsProposal, Moment, Pending, Setup, SetupDraft, Standup, Step, Suggestion, TypedPrimary } from '../types'
 
 // Every atom of the mod lives here: this session's values, kept in $.state.
 //
@@ -66,6 +66,8 @@ const stageUnder = atom({ plugin: 'coanda', key: 'stageUnder' } as const, 0)
 const labLit = atom({ plugin: 'coanda', key: 'labLit' } as const, false)
 // When the current run started (ms), set by a new prompt and cleared when the turn ends; the band breathes after 30 s of it.
 const workStart = atom({ plugin: 'coanda', key: 'workStart' } as const, null as number | null)
+// Long runs in a row (hooks/standup.ts): written at each turn end and by "Not now".
+const standup = atom({ plugin: 'coanda', key: 'standup' } as const, { streak: 0, lastEndAt: 0 } as Standup)
 const typedPrimary = atom({ plugin: 'coanda', key: 'typedPrimary' } as const, null as TypedPrimary | null)
 
 export async function getCards($: StateDollar): Promise<Card[]> {
@@ -346,4 +348,12 @@ export async function getWorkStart($: StateDollar): Promise<number | null> {
 
 export async function updateWorkStart($: StateDollar, change: (now: number | null) => number | null): Promise<number | null> {
   return update($, workStart, change)
+}
+
+export async function getStandup($: StateDollar): Promise<Standup> {
+  return read($, standup)
+}
+
+export async function updateStandup($: StateDollar, change: (now: Standup) => Standup): Promise<Standup> {
+  return update($, standup, change)
 }

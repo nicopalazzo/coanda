@@ -4,6 +4,7 @@ import { idleStage } from './idle'
 import { questionToShow } from './next'
 import { proposalLane } from './goals-ask'
 import type { GoalsAsk } from './goals-ask'
+import { nudgeShows, nudgeText } from './standup'
 import { currentStep, lastOutcomeStep } from './plan'
 
 // The one function that decides what the band shows. Rebuilt 13 Nov 2026 from the v3 display rules
@@ -54,11 +55,19 @@ export function bandModel(s: Snapshot): BandModel {
   // Working and Resting ask nothing, so with no Primary the band offers to set one: the step "Set your
   // Primary" (heading, field, "Set"), built from Nicolas's canvas of Sat 14 Nov. It is a step that needs
   // the person, so it replaces the status row (band-rebuild-plan.md, D4).
-  const now = s.isWorking ? workingRow(s) : restingRow(s)
+  const now = withNudge(s.isWorking ? workingRow(s) : restingRow(s), s)
   const moment = s.isWorking ? 'working' : 'resting'
   if (goalOf(s) === '') return { kind: 'rows', moment, heading: 'Set your Primary', rows: [primarySetRow(s)] }
 
   return { kind: 'rows', moment, rows: [now], primary }
+}
+
+// The stand-up nudge: a muted line and the quiet "Not now" on the NOW row itself (no new row), so the
+// budget holds. Shown once per streak: "Not now" resets the count.
+function withNudge(row: BandRow, s: Snapshot): BandRow {
+  if (!nudgeShows(s.standup, s.now, s.isWorking)) return row
+
+  return { ...row, note: nudgeText(s.standup), buttons: [...row.buttons, { key: 'standup-dismiss', label: 'Not now', variant: 'link', action: { kind: 'standupDismiss' } }] }
 }
 
 // Open cards of this session: the count shows in the label only above 1 (v3 rule 2).

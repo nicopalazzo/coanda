@@ -13,6 +13,7 @@ import { parseNext, parseSuggestions, questionToShow, toAsked } from './next'
 import { applyPlan, lastOutcomeStep, noteCall } from './plan'
 import { blankOf } from './question'
 import { clockTime, dayKey } from './time'
+import { BREAK_MS, FAST_CHECK, LONG_MS, NO_STANDUP, RUNS, noteRun, nudgeShows } from './standup'
 
 // Adapted 13 Nov 2026 from the first repository's tests. Part 1: the tests that take no host (kept
 // as they were), then new pure tests for the v3 band, the decision cards and the question picked.
@@ -230,6 +231,7 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
   shelfInstalled: false,
   detailsOpen: false,
   workingSince: null,
+  standup: { streak: 0, lastEndAt: 0 },
   ...over,
 })
 
@@ -1584,5 +1586,113 @@ test('/coanda-demo: sample question buttons add a small choice, a big choice and
   await ui.press({ key: 'demo-exit' })
   expect(saved.cards).toEqual({ v: 1, items: [] })
   expect(await texts(ui)).not.toContain('Where should Lanes live?')
+  await ui.unmount()
+})
+
+// ---- Stand-up nudge: 3 long runs in a row, a quiet line and "Not now" ---------------------------
+
+const LONG = LONG_MS + 1_000
+const NUDGE = /long runs in a row\. Good moment to stand up and stretch\./
+
+test('stand-up: thresholds are the agreed ones (2 min, 5 min, 3 runs) unless FAST_CHECK is on', () => {
+  expect(FAST_CHECK).toBe(false)
+  expect([RUNS, LONG_MS, BREAK_MS]).toEqual([3, 120_000, 300_000])
+})
+
+test('stand-up: counting. Long runs add up; a short run, a long break or an abort change the streak as agreed', () => {
+  const T = 10_000_000
+  let log = NO_STANDUP
+  log = noteRun(log, T, LONG, false)
+  log = noteRun(log, T + LONG + 60_000, LONG, false)
+  expect(log.streak).toBe(2)
+  expect(nudgeShows(log, log.lastEndAt, false)).toBe(false)
+  log = noteRun(log, log.lastEndAt + 60_000 + LONG, LONG, false)
+  expect(log.streak).toBe(3)
+  expect(nudgeShows(log, log.lastEndAt, false)).toBe(true)
+
+  // An aborted turn leaves the log as it was.
+  expect(noteRun(log, log.lastEndAt + 5_000, LONG, true)).toBe(log)
+  // A short run in the middle resets the count.
+  expect(noteRun(log, log.lastEndAt + 60_000 + 30_000, 30_000, false).streak).toBe(0)
+  expect(noteRun(log, log.lastEndAt + 60_000 + LONG_MS, LONG_MS, false).streak).toBe(0)
+  // A break longer than 5 minutes before the run starts the count again from one.
+  expect(noteRun(log, log.lastEndAt + BREAK_MS + 1 + LONG, LONG, false).streak).toBe(1)
+  // A break of exactly 5 minutes still counts as in a row.
+  expect(noteRun(log, log.lastEndAt + BREAK_MS + LONG, LONG, false).streak).toBe(4)
+})
+
+test('stand-up: resting, the line goes after a 5 minute break; working, it stays while the streak stands', () => {
+  const log = { streak: 3, lastEndAt: NOW }
+
+  expect(nudgeShows(log, NOW + BREAK_MS, false)).toBe(true)
+  expect(nudgeShows(log, NOW + BREAK_MS + 1, false)).toBe(false)
+  expect(nudgeShows(log, NOW + 10 * BREAK_MS, true)).toBe(true)
+})
+
+test('stand-up: one muted line and one quiet link on the Resting and the Working row, inside the budget', () => {
+  const log = { streak: 3, lastEndAt: NOW }
+
+  for (const isWorking of [false, true]) {
+    const model = bandModel(snap({ isWorking, standup: log }))
+    const row = only(model)
+
+    expect(row.note).toBe('3 long runs in a row. Good moment to stand up and stretch.')
+    expect(labels(row)).toEqual(['~Not now'])
+    expect(row.chip).toBeUndefined()
+    expect(row.buttons[0]!.action).toEqual({ kind: 'standupDismiss' })
+    expect(overBudget(model)).toEqual([])
+  }
+
+  // Not before the third run, and not over a question.
+  expect(only(bandModel(snap({ standup: { streak: 2, lastEndAt: NOW } }))).note).toBeUndefined()
+  expect(rowsOf(bandModel(snap({ asked: GUESS, standup: log }))).rows.every(r => r.note === undefined)).toBe(true)
+  // With no Primary set the band asks for it ("Set your Primary", a step that needs the person), and the nudge waits.
+  const noGoal = bandModel(snap({ focus: { status: 'none', primary: '', laneId: '', lanes: [] }, standup: log }))
+  expect(rowsOf(noGoal).heading).toBe('Set your Primary')
+  expect(rowsOf(noGoal).rows[0]!.note).toBeUndefined()
+  expect(overBudget(noGoal)).toEqual([])
+})
+
+test('stand-up on screen: 3 long runs show the line; "Not now" hides it and the next line needs 3 more runs', async ($, on) => {
+  // With a Primary set: without one the band asks for it ("Set your Primary") and the nudge waits.
+  const { ui, clock } = await bandOver($, on, { setup: SETUP_FILE('/data/goals.md'), files: { '/data/goals.md': 'Ship the band\n' }, env: { HOME: '/home/n' }, now: 5_000_000 })
+  const line = () => ui.find({ type: 'Text', text: NUDGE })
+  // One run: it lasts `ms`, then the person rests `rest` before the next one.
+  const finish = async (ms: number, rest = 60_000) => {
+    await clock!.advance(ms)
+    await $.turn.complete({ answer: '', durationMs: ms, isAborted: false, turnId: `r${Math.random()}`, reason: 'answer' })
+    await clock!.advance(rest)
+  }
+
+  await finish(LONG)
+  await finish(LONG)
+  expect(await line()).toBeUndefined()
+  await finish(LONG)
+  expect((await line())?.text).toBe('3 long runs in a row. Good moment to stand up and stretch.')
+  expect(await buttonsOf(ui)).toContain('Not now')
+
+  await ui.press({ key: 'standup-dismiss' })
+  expect(await line()).toBeUndefined()
+  expect(await buttonsOf(ui)).not.toContain('Not now')
+
+  await finish(LONG)
+  await finish(LONG)
+  expect(await line()).toBeUndefined()
+  await finish(LONG)
+  expect(await line()).toBeDefined()
+
+  // A short run in the middle cuts the streak.
+  await ui.press({ key: 'standup-dismiss' })
+  await finish(LONG)
+  await finish(5_000)
+  await finish(LONG)
+  await finish(LONG)
+  expect(await line()).toBeUndefined()
+
+  // The line leaves by itself once the person has rested longer than the break.
+  await finish(LONG)
+  expect(await line()).toBeDefined()
+  await clock!.advance(BREAK_MS + 1)
+  expect(await line()).toBeUndefined()
   await ui.unmount()
 })

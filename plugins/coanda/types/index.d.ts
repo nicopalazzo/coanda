@@ -97,6 +97,8 @@ export type GoalsProposal = { goal: string; lanes: { name: string; outcome: stri
 // The Primary typed in the band, kept for the day it was set (`day`: dayKey, the machine's own time zone).
 export type TypedPrimary = { v: 1; day: string; text: string; setAt: number }
 export type DayEntry = { id: string; text: string; laneId: string; laneOutcome: string; sessionId: string; setAt: number; doneAt?: number; switchedAt?: number }
+// The stand-up nudge's log: long runs in a row, and when the last run ended (hooks/standup.ts).
+export type Standup = { streak: number; lastEndAt: number }
 export type Day = { v: 1; days: Record<string, DayEntry[]> } // key: dayKey(ms)
 export type Drafts = { v: 1; days: Record<string, { written: number; skipped: number }> }
 
@@ -130,6 +132,7 @@ export type Snapshot = {
   demoGoals?: string
   // When this run started (ms), or null when unknown: Working breathes after 30 s of it.
   workingSince: number | null
+  standup: Standup
 }
 
 // A press is data; dispatch() in register.tsx is the only place one is carried out.
@@ -139,6 +142,7 @@ export type BandAction =
   | { kind: 'later'; cardId: string } // the quiet exit on a decision card: deferred
   | { kind: 'send'; text: string; label: string } // a suggested answer
   | { kind: 'dismiss' } // "Not for me" on a guessed question: the guess is dropped, nothing is sent
+  | { kind: 'standupDismiss' } // "Not now" on the stand-up line: hides it and resets the count
   | { kind: 'details' } // the Primary row's "Details": the "done when" line and the Lane
   // The Setup moment. `value` is what the field holds; `submit` is Enter in the field.
   | { kind: 'setupType'; field: 'primary'; value: string; submit?: true }
@@ -168,6 +172,7 @@ export type BandRow = {
   part: PartId | 'setup' | 'sent'
   label?: string
   text: string[]
+  note?: string // one quiet muted line beside the row's quiet link (the stand-up nudge)
   source?: Exclude<LineSource, 'tool'> | 'stale'
   chip?: 'Hard to undo'
   // Working only: show the breathing circle and its caption beside the line.
@@ -217,6 +222,7 @@ declare module 'claude-code' {
       stageUnder: number
       light: boolean
       lightLit: boolean
+      standup: Standup
     }
   }
 }

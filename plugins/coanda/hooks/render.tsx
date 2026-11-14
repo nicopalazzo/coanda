@@ -175,15 +175,25 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
               )}
             </Box>
           )}
+          {r.note !== undefined && (
+            <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap={1}>
+              <Box flexShrink={1} minWidth={0}>
+                <Text color={MUTED} wrap="wrap">
+                  {r.note}
+                </Text>
+              </Box>
+              {r.buttons.filter(b => b.variant === 'link').map(button)}
+            </Box>
+          )}
           {more.map((line, at) => (
             <Text key={`line-${at}`} color={INK} wrap="wrap">
               {line}
             </Text>
           ))}
           {(r.inputs ?? []).map(one => field(one, one.key === firstField?.key))}
-          {r.buttons.length > 0 && (
+          {(r.note === undefined ? r.buttons : r.buttons.filter(b => b.variant !== 'link')).length > 0 && (
             <Box flexDirection="row" flexWrap="wrap" alignItems="flex-start" gap={1}>
-              {r.buttons.map(answer)}
+              {(r.note === undefined ? r.buttons : r.buttons.filter(b => b.variant !== 'link')).map(answer)}
             </Box>
           )}
         </Box>
@@ -266,6 +276,24 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
         // The 28 px circle is taller than one row (20 px): the breathing line takes two.
         y += r.breathe === true ? 2 : 1
       }
+      // The stand-up nudge: its muted line, and the quiet "Not now" on the same line.
+      if (r.note !== undefined) {
+        items.push({
+          key: `row-${i}-note`,
+          y,
+          x: INSET,
+          width: inner,
+          node: (
+            <Box flexDirection="row" alignItems="center" gap={1}>
+              <Box flexShrink={1} minWidth={0}>
+                <Text color={MUTED} wrap="truncate-end">{r.note}</Text>
+              </Box>
+              {r.buttons.filter(b => b.variant === 'link').map(button)}
+            </Box>
+          ),
+        })
+        y += 1
+      }
       more.forEach((line, at) => {
         items.push({ key: `row-${i}-line-${at}`, y, x: INSET, width: inner, node: <Text color={INK} wrap="truncate-end">{line}</Text> })
         y += 1
@@ -297,7 +325,9 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
         y += one.button === undefined ? 2 : 3
       })
 
-      if (r.buttons.length > 0) {
+      // With a note the quiet link is drawn on the note's line.
+      const rowButtons = r.note === undefined ? r.buttons : r.buttons.filter(b => b.variant !== 'link')
+      if (rowButtons.length > 0) {
         // Plan rule R8: one blank row between blocks (the question and its buttons are two blocks). I dropped it in 0.1.25 and the buttons touched the text (seen 14 Nov 13:18).
         if (hasLine || more.length > 0) y += 1
         items.push({
@@ -308,14 +338,14 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
           node: (
             // All buttons sit together like every other button row; a consequence is no longer a column under its button (a long one pushed the next button away, seen 14 Nov 13:56).
             <Box flexDirection="row" flexWrap="wrap" alignItems="flex-start" gap={1}>
-              {r.buttons.map(button)}
+              {rowButtons.map(button)}
             </Box>
           ),
         })
         // A native button is about 1.4 rows tall (seen 14 Nov: 28 px), so it takes 2 rows.
         y += 2
         // One line per consequence under the buttons: the option's name, then what follows from it.
-        r.buttons.forEach(b => {
+        rowButtons.forEach(b => {
           if (b.detail === undefined) return
           items.push({
             key: `row-${i}-detail-${b.key}`,

@@ -14,6 +14,7 @@ import { blankOf } from './question'
 import { dayKey } from './time'
 import { renderDemo, renderDemoOffer, renderDemoStrip } from './demo'
 import { addSample, backupFound, demoFolder, demoGoalsPath, resetDemo, restoreMine, startDemo, writeDemoGoals } from './demo-run'
+import { noteRun } from './standup'
 import { renderBand, renderSpecimen } from './render'
 import { renderGrid } from './grid'
 import { renderLab } from './lab'
@@ -23,6 +24,8 @@ import { REVEAL_MS, renderStage } from './stage'
 import {
   getGrid,
   updateGrid,
+  getStandup,
+  updateStandup,
   getLab,
   updateLab,
   getLabPresses,
@@ -205,6 +208,7 @@ async function snapshot($: State & Pick<EngineInterface, 'clock' | 'session' | '
     shelfInstalled: false,
     detailsOpen: await getDetailsOpen($),
     workingSince: await getWorkStart($),
+    standup: await getStandup($),
   }
 }
 
@@ -322,6 +326,9 @@ async function dispatch($: Presser, action: BandAction): Promise<void> {
       await updateSuggestions($, () => [])
       await updateMoment($, () => 'other')
       await updateAsked($, () => null)
+      return
+    case 'standupDismiss':
+      await updateStandup($, now => ({ ...now, streak: 0 }))
       return
     case 'details':
       await updateDetailsOpen($, open => !open)
@@ -465,6 +472,10 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       await updateSent($, () => null)
       await updateWorkStart($, () => null)
+      // One finished run for the stand-up nudge; the end time is the clock now.
+      const endAt = await $.clock.now()
+      await updateStandup($, log => noteRun(log, endAt, e.durationMs, e.isAborted))
+      $.ui.invalidate('ui.render')
     }
     // Claude's turn ended after Setup asked it: read the goals file; "Asking Claude" goes once it holds goals or is unreadable.
     if (e.agentId === undefined && (await getGoalsAsking($))) {
