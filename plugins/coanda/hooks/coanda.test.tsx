@@ -1978,6 +1978,7 @@ function stageRows(root: unknown): number[] {
 // yet redesigned). A known screen may not grow; when one shrinks or fits, its entry must go, so the list only ever
 // gets shorter. Nothing else may be over.
 const KNOWN_OVER: Record<string, number> = {
+  'shutdown question': 11,
   'question, 2 options with consequences': 10,
   'question, 3 options with consequences, hard to undo': 11,
 }
@@ -2103,5 +2104,36 @@ test('row budget: the demo (Setup with its extra button, then Set your Primary) 
   await ui.press({ key: 'setup-skip' })
   // No Primary in the demo's zero state: the band asks for one.
   expect(overRows('Set your Primary', await ui.drawn())).toEqual([])
+  await ui.unmount()
+})
+
+test('row budget: the four features (breathing, stand-up nudge, shutdown question, day record) fit 9 rows', async ($, on) => {
+  const evening = new Date(2026, 10, 14, 18, 30).getTime()
+  const { ui, clock } = await bandOver($, on, { setup: SETUP_FILE('/data/goals.md'), files: { '/data/goals.md': 'Ship the band\n' }, env: { HOME: '/home/n' }, now: evening, docs: { wins: wins3(evening), shutdown: undefined } })
+  const over: string[] = []
+  const check = async (name: string) => void over.push(...overRows(name, await ui.drawn()))
+
+  // Day record, then the shutdown question, both due at 18:30.
+  await check('day record (3 wins)')
+  await ui.press({ key: 'today-skip' })
+  await check('shutdown question')
+  await ui.press({ key: 'shutdown-skip' })
+
+  // Working, after 30 s of a run: the breathing circle; and the stand-up nudge after 3 long runs.
+  const look = async (name: string) => {
+    const one = await $.ui.mount({ ...BAND, props: { ...BAND.props, isWorking: true } })
+    over.push(...overRows(name, await one.drawn()))
+    await one.unmount()
+  }
+  await $.prompt.submit({ text: 'build it', wait: false, origin: { kind: 'composer' } } as never)
+  await clock!.advance(31_000)
+  await look('working, breathing')
+  await $.turn.complete({ answer: '', durationMs: 31_000, isAborted: false, turnId: 'r1', reason: 'answer' })
+  for (const n of [2, 3, 4]) {
+    await clock!.advance(60_000)
+    await $.turn.complete({ answer: '', durationMs: LONG_MS + 1_000, isAborted: false, turnId: `r${n}`, reason: 'answer' })
+  }
+  await check('resting with the stand-up nudge')
+  expect(over).toEqual([])
   await ui.unmount()
 })
