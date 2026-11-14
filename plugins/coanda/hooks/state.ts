@@ -64,6 +64,8 @@ const stagePlays = atom({ plugin: 'coanda', key: 'stagePlays' } as const, 0)
 const stageOver = atom({ plugin: 'coanda', key: 'stageOver' } as const, 0)
 const stageUnder = atom({ plugin: 'coanda', key: 'stageUnder' } as const, 0)
 const labLit = atom({ plugin: 'coanda', key: 'labLit' } as const, false)
+// When the current run started (ms), set by a new prompt and cleared when the turn ends; the band breathes after 30 s of it.
+const workStart = atom({ plugin: 'coanda', key: 'workStart' } as const, null as number | null)
 const typedPrimary = atom({ plugin: 'coanda', key: 'typedPrimary' } as const, null as TypedPrimary | null)
 
 export async function getCards($: StateDollar): Promise<Card[]> {
@@ -336,4 +338,12 @@ export async function getGrid($: StateDollar): Promise<boolean> {
 
 export async function updateGrid($: StateDollar, change: (now: boolean) => boolean): Promise<boolean> {
   return update($, grid, change)
+}
+
+export async function getWorkStart($: StateDollar): Promise<number | null> {
+  return read($, workStart)
+}
+
+export async function updateWorkStart($: StateDollar, change: (now: number | null) => number | null): Promise<number | null> {
+  return update($, workStart, change)
 }

@@ -37,10 +37,23 @@ export const LABEL_WIDTH = 16
 // The field of a headed step, in cells (Nicolas's canvas, 14 Nov: 65).
 const STEP_FIELD = 65
 
+// The breathing circle (box breathing: in 4 s, hold 4 s, out 4 s, hold 4 s = 16 s). One Dusk circle,
+// CSS keyframes inside the SVG (the way the lamp animates, which the host draws); the caption is a fixed
+// native Text, since words cannot change without a script. Reduced motion holds it still at mid size.
+export const BREATHE_CAPTION = 'one breath while you wait, or ignore it'
+export const BREATHE_SECONDS = 16
+export const BREATHE_SVG =
+  `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">` +
+  `<style>.b{animation:b ${BREATHE_SECONDS}s linear infinite}` +
+  `@keyframes b{0%{r:5px;animation-timing-function:ease-in-out}25%{r:12px}50%{r:12px;animation-timing-function:ease-in-out}75%{r:5px}100%{r:5px}}` +
+  `@media (prefers-reduced-motion:reduce){.b{animation:none;r:8px}}</style>` +
+  `<circle class="b" cx="14" cy="14" r="5" fill="#5663A8"/></svg>`
+
 export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JSX.Element {
   const { Box, Button, Text } = draw.ui
   const { columns, dispatch } = draw
   const Input = 'Input' in draw.ui ? draw.ui.Input : undefined
+  const Svg = 'Svg' in draw.ui ? draw.ui.Svg : undefined
 
   const press = (action: BandAction) => () => void dispatch(action)
 
@@ -129,7 +142,7 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
   // Intent's row: the label column, then the content column; aligned to the top.
   const row = (r: BandRow, i: number, firstField: { key: string } | undefined) => {
     const [first, ...more] = r.text
-    const hasLine = first !== undefined || r.chip !== undefined || r.source !== undefined
+    const hasLine = first !== undefined || r.chip !== undefined || r.source !== undefined || r.breathe === true
 
     return (
       <Box key={`row-${i}`} flexDirection="row" alignItems="flex-start" gap={1}>
@@ -138,6 +151,14 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
           {hasLine && (
             <Box flexDirection="row" flexWrap="wrap" alignItems="flex-start" gap={1}>
               {first !== undefined && <Box flexShrink={1} minWidth={0}>{firstLine(r, first)}</Box>}
+              {r.breathe === true && Svg !== undefined && (
+                <Box key="breathe" flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
+                  <Svg source={BREATHE_SVG} alt="A circle that grows and shrinks slowly, a breathing guide" width={28} height={28} isInteractive />
+                  <Text size="caption" color={MUTED}>
+                    {BREATHE_CAPTION}
+                  </Text>
+                </Box>
+              )}
               {r.chip !== undefined && (
                 <Box flexShrink={0}>
                   <Text size="caption" color={RISK}>
@@ -217,7 +238,7 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
       const [first, ...more] = r.text
       // With a heading the severity is drawn next to it; without one it stays on the line.
       const chip = m.heading === undefined ? r.chip : undefined
-      const hasLine = first !== undefined || chip !== undefined || r.source !== undefined
+      const hasLine = first !== undefined || chip !== undefined || r.source !== undefined || r.breathe === true
       const inputs = Input === undefined ? [] : (r.inputs ?? [])
 
       if (hasLine) {
@@ -229,12 +250,21 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
           node: (
             <Box flexDirection="row" alignItems="flex-start" gap={1}>
               {first !== undefined && <Box flexShrink={1} minWidth={0}>{firstLine(r, first)}</Box>}
+              {r.breathe === true && Svg !== undefined && (
+                <Box key="breathe" flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
+                  <Svg source={BREATHE_SVG} alt="A circle that grows and shrinks slowly, a breathing guide" width={28} height={28} isInteractive />
+                  <Text size="caption" color={MUTED}>
+                    {BREATHE_CAPTION}
+                  </Text>
+                </Box>
+              )}
               {chip !== undefined && <Box flexShrink={0}><Text color={RISK}>{`⚠ ${chip}`}</Text></Box>}
               {r.source !== undefined && <Box flexShrink={0}><Text mono color={WARN}>{r.source}</Text></Box>}
             </Box>
           ),
         })
-        y += 1
+        // The 28 px circle is taller than one row (20 px): the breathing line takes two.
+        y += r.breathe === true ? 2 : 1
       }
       more.forEach((line, at) => {
         items.push({ key: `row-${i}-line-${at}`, y, x: INSET, width: inner, node: <Text color={INK} wrap="truncate-end">{line}</Text> })

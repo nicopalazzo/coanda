@@ -3,8 +3,8 @@ import type { TestBody } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 
 import type { BandModel, BandRow, Card, Setup, Snapshot, Step } from '../types'
-import { bandModel, overBudget } from './band'
-import { LABEL_WIDTH } from './render'
+import { BREATHE_AFTER_MS, bandModel, overBudget } from './band'
+import { BREATHE_CAPTION, BREATHE_SECONDS, BREATHE_SVG, LABEL_WIDTH } from './render'
 import { close, supersede, toCard } from './cards'
 import { goalsMessage, proposalLane, proposalMessage, proposalText, toProposal } from './goals-ask'
 import { endLabel, goalsState, focusSourceOf, laneText, parseFocus, parseFocusMd, parsePlain, primaryText, shortPrimary } from './focus'
@@ -229,6 +229,7 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
   lastActivity: 0,
   shelfInstalled: false,
   detailsOpen: false,
+  workingSince: null,
   ...over,
 })
 
@@ -966,6 +967,57 @@ test('/coanda-grid shows the grid page, then hides it again', async ($, on) => {
   await $.command.run({ command: 'coanda-grid' } as never)
   expect(await texts(ui)).not.toContain('COANDA GRID · run /coanda-grid again to hide')
   await ui.unmount()
+})
+
+test('breathe while it builds: only Working, only after 30 s, asks nothing, within the budget', () => {
+  const run = (over: Partial<Snapshot>) => bandModel(snap({ isWorking: true, ...over }))
+  const nowRow = (m: BandModel) => rowsOf(m).rows[0]!
+
+  expect(BREATHE_AFTER_MS).toBe(30_000)
+  expect(nowRow(run({ workingSince: NOW - 29_000 })).breathe).toBeUndefined()
+  expect(nowRow(run({ workingSince: NOW - 31_000 })).breathe).toBe(true)
+  expect(nowRow(run({ workingSince: null })).breathe).toBeUndefined()
+  // Resting never breathes, even with a start time left over.
+  expect(nowRow(bandModel(snap({ isWorking: false, workingSince: NOW - 90_000 }))).breathe).toBeUndefined()
+  // It adds no button and no row.
+  const long = run({ workingSince: NOW - 90_000 })
+  expect(nowRow(long).buttons).toEqual([])
+  expect(overBudget(long)).toEqual([])
+})
+
+test('breathe drawing: a Dusk circle on a 16 s keyframe loop and a fixed muted caption', () => {
+  expect(BREATHE_SECONDS).toBe(16)
+  expect(BREATHE_SVG).toContain('#5663A8')
+  expect(BREATHE_SVG).toContain('@keyframes')
+  expect(BREATHE_SVG).toContain('16s')
+  expect(BREATHE_SVG).toContain('prefers-reduced-motion')
+  expect(BREATHE_CAPTION).toBe('one breath while you wait, or ignore it')
+})
+
+test('breathe in the band: appears 30 s into a run, goes when the run ends', async ($, on) => {
+  // With a Primary set: without one the band asks for it ("Set your Primary") instead of showing the NOW line.
+  const { clock } = await bandOver($, on, { setup: SETUP_FILE('/data/goals.md'), files: { '/data/goals.md': 'Ship the band\n' }, env: { HOME: '/home/n' }, now: 5_000_000 })
+  // The test host redraws a mounted band on state changes only (it ignores ui.invalidate), so each look mounts a fresh one.
+  const look = async () => {
+    const one = await $.ui.mount({ ...BAND, props: { ...BAND.props, isWorking: true } })
+    const text = JSON.stringify(await one.drawn())
+    await one.unmount()
+
+    return text
+  }
+
+  expect(await look()).not.toContain('one breath while you wait')
+  await $.prompt.submit({ text: 'build it', wait: false, origin: { kind: 'composer' } } as never)
+  await clock!.advance(29_000)
+  expect(await look()).not.toContain('one breath while you wait')
+
+  await clock!.advance(2_000)
+  const long = await look()
+  expect(long).toContain('one breath while you wait, or ignore it')
+  // The test host draws an Svg as an empty node, so the drawing itself is checked in the test above.
+
+  await done($, 't1', 'ok')
+  expect(await look()).not.toContain('one breath while you wait')
 })
 
 test('Setup opens with the lamp: dark with one button, pulled it plays once, then the plain band stays', async ($, on) => {

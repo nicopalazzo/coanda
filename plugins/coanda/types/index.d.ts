@@ -128,6 +128,8 @@ export type Snapshot = {
   detailsOpen: boolean
   // While /coanda-demo runs: the demo goals file Setup proposes instead of asking for a path.
   demoGoals?: string
+  // When this run started (ms), or null when unknown: Working breathes after 30 s of it.
+  workingSince: number | null
 }
 
 // A press is data; dispatch() in register.tsx is the only place one is carried out.
@@ -168,6 +170,8 @@ export type BandRow = {
   text: string[]
   source?: Exclude<LineSource, 'tool'> | 'stale'
   chip?: 'Hard to undo'
+  // Working only: show the breathing circle and its caption beside the line.
+  breathe?: true
   inputs?: BandInput[]
   buttons: BandButton[]
 }
@@ -196,6 +200,7 @@ declare module 'claude-code' {
       goalsProposal: GoalsProposal | null
       detailsOpen: boolean
       typedPrimary: TypedPrimary | null
+      workStart: number | null
       specimen: boolean
       demo: number | null
       demoMode: 'off' | 'on' | 'offer'

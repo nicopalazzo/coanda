@@ -89,13 +89,18 @@ function cardRow(card: Card, waiting: number): BandRow {
   }
 }
 
+// A run longer than this shows the breathing circle beside the Working line.
+export const BREATHE_AFTER_MS = 30_000
+
 // Working: one NOW line from the task list, a tool fact, so no stamp.
 function workingRow(s: Snapshot): BandRow {
   const steps = s.plan.steps
   const at = currentStep(steps)
   const text = at < 0 ? 'Working' : `${steps[at]!.content} · step ${at + 1} of ${steps.length}`
 
-  return { part: 'now', label: 'Now', text: [text], buttons: [] }
+  const isLong = s.workingSince !== null && s.now - s.workingSince >= BREATHE_AFTER_MS
+
+  return { part: 'now', label: 'Now', text: [text], ...(isLong ? { breathe: true as const } : {}), buttons: [] }
 }
 
 // Resting: one NOW line. A finished task list is a tool fact; the model's "done" is a guess, stamped.

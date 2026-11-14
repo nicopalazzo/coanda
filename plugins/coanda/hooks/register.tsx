@@ -1,7 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { BandAction, Pending, Snapshot } from '../types'
-import { bandModel } from './band'
+import { BREATHE_AFTER_MS, bandModel } from './band'
 import { ASK_DECISION, answer, toCard } from './cards'
 import { NO_FOCUS, UNREADABLE_FOCUS, goalsState, parseFocus } from './focus'
 import { PROPOSE_GOALS, goalsMessage, proposalMessage, toProposal } from './goals-ask'
@@ -70,6 +70,8 @@ import {
   getSpecimen,
   getSuggestions,
   getTypedPrimary,
+  getWorkStart,
+  updateWorkStart,
   updateAsked,
   updateDetailsOpen,
   updateDoneLast,
@@ -202,6 +204,7 @@ async function snapshot($: State & Pick<EngineInterface, 'clock' | 'session' | '
     lastActivity: 0,
     shelfInstalled: false,
     detailsOpen: await getDetailsOpen($),
+    workingSince: await getWorkStart($),
   }
 }
 
@@ -418,6 +421,11 @@ export const register: Register = on => {
     if (!e.turnId) {
       isFreshPlan = false
       void updateLastPrompt($, () => e.text)
+      // A new run: the band breathes once it has lasted BREATHE_AFTER_MS. One redraw is asked for at that
+      // moment; the render rechecks the clock and isWorking, so a timer left over from a finished run draws nothing.
+      const started = await $.clock.now()
+      void updateWorkStart($, () => started)
+      $.clock.after(BREATHE_AFTER_MS, () => $.ui.invalidate('ui.render'))
       void updateSuggestions($, () => [])
       void updateMoment($, () => 'other')
       // Typing in the prompt is the person's own answer (v3 rule 3): it answers the open card the band
@@ -454,7 +462,10 @@ export const register: Register = on => {
   // After each answer, the moment and its question are read; a reload that ate this event is caught at the next start.
   on('turn.complete', async ($, e, next) => {
     const ran = await next(e)
-    if (e.agentId === undefined) await updateSent($, () => null)
+    if (e.agentId === undefined) {
+      await updateSent($, () => null)
+      await updateWorkStart($, () => null)
+    }
     // Claude's turn ended after Setup asked it: read the goals file; "Asking Claude" goes once it holds goals or is unreadable.
     if (e.agentId === undefined && (await getGoalsAsking($))) {
       await refreshFocus($)
