@@ -39,7 +39,8 @@ export function bandModel(s: Snapshot): BandModel {
       source: 'inferred',
       buttons: [
         ...asked.options.slice(0, 3).map(
-          (one, i): BandButton => ({ key: `asked-${i}`, label: one.label, variant: 'secondary', action: { kind: 'send', text: one.prompt, label: one.label } }),
+          // As in Intent: the first answer primary, the others secondary.
+          (one, i): BandButton => ({ key: `asked-${i}`, label: one.label, variant: i === 0 ? 'primary' : 'secondary', action: { kind: 'send', text: one.prompt, label: one.label } }),
         ),
         { key: 'asked-dismiss', label: 'Not for me', variant: 'link', action: { kind: 'dismiss' } },
       ],
@@ -48,9 +49,13 @@ export function bandModel(s: Snapshot): BandModel {
     return { kind: 'rows', moment: 'guessed', rows: [row], primary }
   }
 
-  if (s.isWorking) return { kind: 'rows', moment: 'working', rows: [workingRow(s)], primary }
+  // Working and Resting ask nothing, so with no Primary the band offers to set one (band-mapping.md,
+  // 15): a PRIMARY row with its field and "Set", in place of the Primary row under the band.
+  const now = s.isWorking ? workingRow(s) : restingRow(s)
+  const moment = s.isWorking ? 'working' : 'resting'
+  if (goalOf(s) === '') return { kind: 'rows', moment, rows: [now, primarySetRow(s)] }
 
-  return { kind: 'rows', moment: 'resting', rows: [restingRow(s)], primary }
+  return { kind: 'rows', moment, rows: [now], primary }
 }
 
 // Open cards of this session: the count shows in the label only above 1 (v3 rule 2).
@@ -63,14 +68,15 @@ function cardRow(card: Card, waiting: number): BandRow {
     part: 'question',
     label: waiting > 1 ? `Question · ${waiting} waiting` : 'Question',
     text: [card.question],
-    ...(card.isHardToUndo ? { chip: 'hard to undo' as const } : {}),
+    ...(card.isHardToUndo ? { chip: 'Hard to undo' as const } : {}),
     ...(card.from === 'tool' ? {} : { source: card.from }),
     buttons: [
       ...card.options.slice(0, 3).map(
         (option, i): BandButton => ({
           key: `${card.id}-o${i}`,
           label: option.label,
-          variant: 'secondary',
+          // As in Intent: the first option (the agent's recommendation) primary, the others secondary.
+          variant: i === 0 ? 'primary' : 'secondary',
           ...(option.consequence === '' ? {} : { detail: option.consequence }),
           action: { kind: 'pick', card, option: option.label },
         }),
@@ -102,15 +108,46 @@ function restingRow(s: Snapshot): BandRow {
   return { part: 'now', label: 'Now', text: ['Idle'], buttons: [] }
 }
 
+// Today's goal: the goals file's Primary wins; else the one typed in the band (snapshot gives it
+// only on the day it was set); else ''.
+function goalOf(s: Snapshot): string {
+  if (s.focus.status === 'ok' && s.focus.primary !== '') return primaryText(s.focus)
+  if (s.sessionPrimary !== null && s.sessionPrimary.from === 'band') return s.sessionPrimary.text
+
+  return ''
+}
+
+// No Primary: the PRIMARY row, a field "The one thing today…" and "Set" after it (02-playable-band).
+// A goals file that is closed or cannot be read says so first, in plain words.
+function primarySetRow(s: Snapshot): BandRow {
+  return {
+    part: 'primary',
+    label: 'Primary',
+    text: s.focus.status === 'closed' || s.focus.status === 'unreadable' ? [primaryText(s.focus)] : [],
+    inputs: [
+      {
+        key: 'primary-input',
+        kind: 'text',
+        value: s.setupDraft.primary,
+        placeholder: 'The one thing today…',
+        button: { key: 'primary-set', label: 'Set', action: { kind: 'primarySet' } },
+        action: { kind: 'setupType', field: 'primary', value: '' },
+      },
+    ],
+    buttons: [],
+  }
+}
+
 // The Primary row shows the goal only; "Details" opens the Lane (rule 6). FocusResult has no
 // "done when" line yet, so Details shows the Lane alone.
 function primaryRow(s: Snapshot): BandRow {
   // The file's Lanes when it has any, else the typed ones, never both.
   const lane = laneText(s.focus.lanes.length > 0 ? s.focus : { ...s.focus, lanes: s.setup.lanes }, s.now)
+  const goal = goalOf(s)
 
   return {
     part: 'primary',
-    text: [`◎ ${primaryText(s.focus)}`, ...(s.detailsOpen ? [lane === '' ? 'No Lane set' : `Lane: ${lane}`] : [])],
+    text: [`◎ ${goal === '' ? primaryText(s.focus) : goal}`, ...(s.detailsOpen ? [lane === '' ? 'No Lane set' : `Lane: ${lane}`] : [])],
     buttons: [{ key: 'primary-details', label: s.detailsOpen ? 'Less' : 'Details', variant: 'link', action: { kind: 'details' } }],
   }
 }
@@ -119,11 +156,27 @@ function primaryRow(s: Snapshot): BandRow {
 // asked: at most 2 rows, 1 button, 1 link, no chip. Something asked: at most 2 rows, 3 buttons,
 // 1 link, 1 chip. The Primary row is counted apart. An empty list means within budget.
 export function overBudget(model: BandModel): string[] {
+  // A Setup step: one answer at a time. At most 1 primary button, 1 link, 2 fields, no second way
+  // to submit (no secondary button); the plain "Remove n" of a kept Lane is not counted.
+  if (model.kind === 'setup') {
+    const buttons = model.rows.flatMap(row => row.buttons)
+    const limit = { primary: 1, secondary: 0, links: 1, inputs: 2 }
+    const count = {
+      primary: buttons.filter(one => one.variant === 'primary').length,
+      secondary: buttons.filter(one => one.variant === 'secondary' || one.variant === undefined).length,
+      links: buttons.filter(one => one.variant === 'link').length,
+      inputs: model.rows.flatMap(row => row.inputs ?? []).length,
+    }
+
+    return (Object.keys(limit) as (keyof typeof limit)[]).filter(k => count[k] > limit[k]).map(k => `${k}: ${count[k]} of at most ${limit[k]}`)
+  }
+
   if (model.kind !== 'rows') return []
 
   const asks = model.moment === 'pick' || model.moment === 'guessed'
   const limit = asks ? { rows: 2, buttons: 3, links: 1, chips: 1 } : { rows: 2, buttons: 1, links: 1, chips: 0 }
-  const buttons = model.rows.flatMap(row => row.buttons)
+  // A field's own button (its submit) counts as a button too.
+  const buttons = [...model.rows.flatMap(row => row.buttons), ...model.rows.flatMap(row => (row.inputs ?? []).flatMap(one => (one.button ? [{ variant: 'primary' as const }] : [])))]
   const count = {
     rows: model.rows.length,
     buttons: buttons.filter(one => one.variant !== 'link').length,
@@ -134,8 +187,8 @@ export function overBudget(model: BandModel): string[] {
   return (Object.keys(limit) as (keyof typeof limit)[]).filter(k => count[k] > limit[k]).map(k => `${k}: ${count[k]} of at most ${limit[k]}`)
 }
 
-// How many steps the Setup moment has. Step 0 is the Focus source and the Lanes.
-export const SETUP_STEPS = 1
+// How many steps the Setup moment has: 0 the goals file, 1 the Lanes.
+export const SETUP_STEPS = 2
 
 const plain = (key: string, label: string, action: BandAction): BandButton => ({ key, label, variant: 'plain', action })
 
@@ -146,49 +199,72 @@ const laneLine = (lane: Lane, i: number, now: number): string => {
   return `${i + 1}. ${lane.outcome}${end === '' ? '' : ` · ${end}`}`
 }
 
-// The Setup moment: step 0 asks for the Focus source and the Lanes; every step has Skip.
-// Brought over from the first repository's band almost as it was.
+// The Setup moment, rebuilt 13 Nov 2026 by the v3 rules after the first look on screen, then by
+// band-mapping.md: one question per step; each field with its submit as a button element after it
+// (Enter does the same); the answer stronger than the exit. Until something is kept the step offers the quiet "Skip"; once it is, one
+// primary button ("Next", or "Done" on the last step). The rules live in the placeholders.
 function setupRows(s: Snapshot): BandRow[] {
   const { setup, setupDraft: draft } = s
-  const typed = (field: 'file' | 'lane' | 'end'): BandAction => ({ kind: 'setupType', field, value: '' })
+  const typed = (field: 'file' | 'lane' | 'end' | 'primary'): BandAction => ({ kind: 'setupType', field, value: '' })
+  const label = `Setup · ${s.setupStep + 1} of ${SETUP_STEPS}`
+  const isLast = s.setupStep + 1 >= SETUP_STEPS
+  const next = (hasKept: boolean): BandButton =>
+    hasKept
+      ? { key: 'setup-next', label: isLast ? 'Done' : 'Next', variant: 'primary', action: { kind: 'setupNext' } }
+      : { key: 'setup-next', label: 'Skip', variant: 'link', action: { kind: 'setupNext' } }
+
+  if (s.setupStep === 0) {
+    const kept = setup.focus?.kind === 'file' ? setup.focus.path : ''
+
+    return [
+      {
+        part: 'setup',
+        label,
+        text: ['Where are your goals written?', ...(kept === '' ? [] : [`Reading: ${kept}`]), ...(draft.fileNote === '' ? [] : [draft.fileNote])],
+        inputs: [
+          {
+            key: 'setup-file',
+            kind: 'text',
+            value: draft.file,
+            placeholder: '~/goals.md or a full path',
+            button: { key: 'setup-file-use', label: 'Use', action: { kind: 'setupFile' } },
+            action: typed('file'),
+          },
+        ],
+        buttons: [next(kept !== '')],
+      },
+    ]
+  }
+
   const hasSomething = setup.focus !== null || setup.lanes.length > 0
 
   return [
-    { part: 'setup', label: 'SETUP', text: [`Step ${s.setupStep + 1} of ${SETUP_STEPS}. Coanda asks once. Skip any step.`], buttons: [] },
     {
       part: 'setup',
-      label: 'GOALS FILE',
+      label,
       text: [
-        'Where are your goals written? Name the file: a full path, or one starting with ~/.',
-        ...(setup.focus?.kind === 'file' ? [`Reading: ${setup.focus.path}`] : []),
-        ...(draft.fileNote === '' ? [] : [draft.fileNote]),
-      ],
-      inputs: [{ key: 'setup-file', kind: 'text', value: draft.file, placeholder: '~/goals.md', action: typed('file') }],
-      buttons: [{ key: 'setup-file-use', label: 'Use this file', variant: 'secondary', action: { kind: 'setupFile' } }],
-    },
-    {
-      part: 'setup',
-      label: 'LANES',
-      text: [
-        `Or write 1 to ${MAX_LANES} Lanes: what you are working toward. An end date is optional (YYYY-MM-DD).`,
+        `What are you working toward? 1 to ${MAX_LANES} Lanes.`,
         ...setup.lanes.map((lane, i) => laneLine(lane, i, s.now)),
         ...(draft.laneNote === '' ? [] : [draft.laneNote]),
       ],
       inputs: [
-        { key: 'setup-lane', kind: 'text', value: draft.lane, placeholder: 'Lane outcome', action: typed('lane') },
-        { key: 'setup-end', kind: 'text', value: draft.end, placeholder: 'End date', action: typed('end') },
+        { key: 'setup-lane', kind: 'text', value: draft.lane, placeholder: 'Outcome, e.g. portfolio live', action: typed('lane') },
+        // One "Add Lane" for the pair, after the second field; Enter in either field adds it too.
+        {
+          key: 'setup-end',
+          kind: 'text',
+          value: draft.end,
+          placeholder: 'End date, optional: 2026-12-14',
+          button: { key: 'setup-lane-add', label: 'Add Lane', action: { kind: 'setupAddLane' } },
+          action: typed('end'),
+        },
       ],
       buttons: [
-        { key: 'setup-lane-add', label: 'Add Lane', variant: 'secondary', action: { kind: 'setupAddLane' } },
         ...setup.lanes.map(
           (lane, i): BandButton => plain(`setup-lane-remove-${i}`, `Remove ${i + 1}`, { kind: 'setupRemoveLane', laneId: lane.id }),
         ),
+        next(hasSomething),
       ],
-    },
-    {
-      part: 'setup',
-      text: [],
-      buttons: [{ key: 'setup-next', label: hasSomething ? 'Done' : 'Skip', variant: 'primary', action: { kind: 'setupNext' } }],
     },
   ]
 }

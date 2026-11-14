@@ -13,7 +13,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 
 // Pure files: no host calls, no clock, no files.
 const CORE = ['band', 'focus', 'idle', 'time', 'cards', 'plan', 'next', 'question', 'line']
-const SHELL = ['register', 'render', 'state', 'store', 'io', 'model']
+const SHELL = ['register', 'render', 'grid', 'lab', 'lab-client', 'light', 'stage', 'lamp', 'state', 'store', 'io', 'model']
 
 const sources = Object.fromEntries(
   readdirSync(here)

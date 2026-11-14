@@ -4,6 +4,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import type { BandModel, BandRow, Card, Setup, Snapshot, Step } from '../types'
 import { bandModel, overBudget } from './band'
+import { LABEL_WIDTH } from './render'
 import { close, supersede, toCard } from './cards'
 import { checkFocusPath, checkLane, endLabel, focusSourceOf, laneText, parseFocus, parseFocusMd, parsePlain, primaryText, shortPrimary } from './focus'
 import { claudeConfigDir } from './io'
@@ -212,7 +213,7 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
   setup: SETUP_DONE,
   setupOpen: false,
   setupStep: 0,
-  setupDraft: { file: '', lane: '', end: '', fileNote: '', laneNote: '' },
+  setupDraft: { file: '', lane: '', end: '', primary: '', fileNote: '', laneNote: '' },
   focus: { status: 'ok', primary: 'Ship the v0.1 install', laneId: 'own-1', lanes: [] },
   sessionPrimary: null,
   cards: [],
@@ -268,7 +269,42 @@ test('v3: Setup comes first, until finished or reopened', () => {
   expect(bandModel(snap({ setup: { ...SETUP_DONE, doneAt: null } })).kind).toBe('setup')
   expect(bandModel(snap({ setupOpen: true, cards: [cardOf('c1')] })).kind).toBe('setup')
   const setup = bandModel(snap({ setup: { ...SETUP_DONE, doneAt: null } }))
-  expect(JSON.stringify(setup)).toContain('Coanda asks once')
+  expect(JSON.stringify(setup)).toContain('Setup · 1 of 2')
+})
+
+test('v3 Setup: one question per step, one way to submit, the answer stronger than the exit', () => {
+  const first = (over: Partial<Snapshot>) => bandModel(snap({ setup: { ...SETUP_DONE, doneAt: null, lanes: [] }, ...over }))
+  const rowOfStep = (model: BandModel) => {
+    if (model.kind !== 'setup') throw new Error(`expected setup, got ${model.kind}`)
+    expect(model.rows).toHaveLength(1)
+
+    return model.rows[0]!
+  }
+
+  // Step 1: the goals file. Nothing kept: the quiet "Skip" only; Enter is named "use".
+  const file = rowOfStep(first({}))
+  expect(file).toMatchObject({ label: 'Setup · 1 of 2', text: ['Where are your goals written?'] })
+  // The field's submit is a button element after it (band-mapping.md, 12); no chip name, so no host chip (seen A5).
+  expect(file.inputs?.map(one => [one.key, one.submitLabel, one.button?.label])).toEqual([['setup-file', undefined, 'Use']])
+  expect(labels(file)).toEqual(['~Skip'])
+  // A file kept: "Next" as the one primary button, no Skip.
+  const kept = rowOfStep(first({ setup: { ...SETUP_DONE, doneAt: null, lanes: [], focus: { kind: 'file', path: '/data/goals.md' } } }))
+  expect(kept.text).toContain('Reading: /data/goals.md')
+  expect(kept.buttons.map(b => [b.label, b.variant])).toEqual([['Next', 'primary']])
+
+  // Step 2: the Lanes. Two fields, both submitting the Lane; "Done" once something is kept.
+  const lanes = rowOfStep(first({ setupStep: 1 }))
+  expect(lanes).toMatchObject({ label: 'Setup · 2 of 2', text: ['What are you working toward? 1 to 3 Lanes.'] })
+  expect(lanes.inputs?.map(one => [one.key, one.submitLabel, one.button?.label])).toEqual([['setup-lane', undefined, undefined], ['setup-end', undefined, 'Add Lane']])
+  expect(labels(lanes)).toEqual(['~Skip'])
+  const withLane = rowOfStep(first({ setupStep: 1, setup: { ...SETUP_DONE, doneAt: null } }))
+  expect(withLane.text).toContain('1. Proof: MVP live')
+  expect(labels(withLane)).toEqual(['Remove 1', 'Done'])
+
+  // The budget for a Setup step: no second way to submit, at most 1 primary and 1 link.
+  for (const one of [first({}), first({ setupStep: 1, setup: SETUP_DONE, setupOpen: true })]) expect(overBudget(one)).toEqual([])
+  const doubled: BandModel = { kind: 'setup', step: 0, rows: [{ ...file, buttons: [...file.buttons, { key: 'x', label: 'Use this file', variant: 'secondary', action: { kind: 'setupFile' } }] }] }
+  expect(overBudget(doubled)).toEqual(['secondary: 1 of at most 0'])
 })
 
 test('v3 Resting: one NOW line; a finished plan is a tool fact, the model\'s "done" is stamped inferred', () => {
@@ -324,7 +360,7 @@ test('v3 Small choice: the question, one button per option with its consequence,
 })
 
 test('v3 exceptions only: the chip when hard to undo, the count above 1, only this session\'s cards', () => {
-  expect(only(bandModel(snap({ cards: [cardOf('c1', { isHardToUndo: true })] }))).chip).toBe('hard to undo')
+  expect(only(bandModel(snap({ cards: [cardOf('c1', { isHardToUndo: true })] }))).chip).toBe('Hard to undo')
   expect(only(bandModel(snap({ cards: [cardOf('c1'), cardOf('c2', { question: 'Second?' })] }))).label).toBe('Question · 2 waiting')
   // A closed or deferred card does not count; another session's card does not show here.
   expect(only(bandModel(snap({ cards: [cardOf('c1'), cardOf('c2', { status: 'deferred' })] }))).label).toBe('Question')
@@ -375,6 +411,31 @@ test('v3 Primary row: the goal only; "Details" opens the Lane', () => {
   expect(rowsOf(bandModel(fileLane)).primary!.text[1]).toBe('Lane: File lane')
 })
 
+test('no Primary: Resting and Working offer the PRIMARY row with its field and "Set"; a question does not', () => {
+  const none = { focus: { status: 'none' as const, primary: '', laneId: '', lanes: [] } }
+  const resting = rowsOf(bandModel(snap(none)))
+
+  expect(resting.moment).toBe('resting')
+  expect(resting.primary).toBeUndefined()
+  const set = resting.rows[1]!
+  expect(set).toMatchObject({ part: 'primary', label: 'Primary', text: [] })
+  expect(set.inputs?.map(one => [one.key, one.placeholder, one.button?.label])).toEqual([['primary-input', 'The one thing today…', 'Set']])
+  expect(set.inputs?.[0]?.button?.action).toEqual({ kind: 'primarySet' })
+  expect(overBudget(resting)).toEqual([])
+  expect(rowsOf(bandModel(snap({ ...none, isWorking: true }))).rows[1]?.label).toBe('Primary')
+  // A closed or unreadable goals file says why, in plain words.
+  expect(rowsOf(bandModel(snap({ focus: { status: 'unreadable', primary: '', laneId: '', lanes: [] } }))).rows[1]?.text).toEqual(['Focus file not readable'])
+  // While something is asked, the choices only: the Primary row stays under the band.
+  const pick = rowsOf(bandModel(snap({ ...none, cards: [cardOf('c1')] })))
+  expect(pick.rows).toHaveLength(1)
+  expect(pick.primary?.text).toEqual(['◎ no Primary set'])
+
+  // A Primary typed in the band shows like any goal; a goals file with a Primary wins over it.
+  const typed = { from: 'band' as const, entryId: '', text: 'Ship the band', laneId: '', setAt: 1 }
+  expect(rowsOf(bandModel(snap({ ...none, sessionPrimary: typed }))).primary?.text).toEqual(['◎ Ship the band'])
+  expect(rowsOf(bandModel(snap({ sessionPrimary: typed }))).primary?.text).toEqual(['◎ Ship the v0.1 install'])
+})
+
 test('v3 budget (rule 5): every moment is within it, and an overfilled band is caught', () => {
   const steps = [stepOf('A', 'in_progress')]
   const three = cardOf('c1', {
@@ -399,7 +460,7 @@ test('v3 budget (rule 5): every moment is within it, and an overfilled band is c
   const fat: BandModel = {
     kind: 'rows',
     moment: 'resting',
-    rows: [{ part: 'now', text: ['x'], chip: 'hard to undo', buttons: [{ key: 'a', label: 'a', action: { kind: 'details' } }, { key: 'b', label: 'b', action: { kind: 'details' } }] }],
+    rows: [{ part: 'now', text: ['x'], chip: 'Hard to undo', buttons: [{ key: 'a', label: 'a', action: { kind: 'details' } }, { key: 'b', label: 'b', action: { kind: 'details' } }] }],
   }
   expect(overBudget(fat)).toEqual(['buttons: 2 of at most 1', 'chips: 1 of at most 0'])
 })
@@ -480,8 +541,6 @@ type Own = {
   env: Record<string, string>
   docs?: Record<string, unknown>
   now?: number
-  // Another mod's band in the same slot.
-  below?: true
 }
 
 // A band mounted over a person's own setup: what `$.store` holds, the files that exist, the
@@ -496,6 +555,8 @@ async function bandOver($: Parameters<TestBody>[0], on: Parameters<TestBody>[1],
   const model = { answer: '', text: '{"moment":"other","suggestions":[]}' }
   mock.env(on, own.env)
   on('tool.register', () => ({ value: { tool: 'mcp__coanda__ask_decision' } }))
+  const commands: string[] = []
+  on('command.register', (_, e) => (commands.push(e.name), { value: { command: e.name } }))
   on('tool.call', () => ({ result: {} }))
   on('fs.read', (_, e) => {
     reads.push(e.path)
@@ -521,13 +582,6 @@ async function bandOver($: Parameters<TestBody>[0], on: Parameters<TestBody>[1],
   on('model.complete', () => ({
     value: { isAnswered: true, text: model.text, usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
   }))
-  if (own.below) {
-    on('ui.render', ($, e) => {
-      const { Text } = $.ui.resolve(e)
-
-      return <Text>below</Text>
-    })
-  }
   // With `now` the clock is a held one the test moves; without it, a fixed time and no ticks.
   const clock = own.now === undefined ? null : mock.clock(on, { now: own.now })
   if (clock === null) {
@@ -540,7 +594,7 @@ async function bandOver($: Parameters<TestBody>[0], on: Parameters<TestBody>[1],
   await start()
   const ui = await $.ui.mount(BAND)
 
-  return { ui, clock, reads, saved, sets, sent, toasts, model, restart: start }
+  return { ui, clock, reads, saved, sets, sent, toasts, model, commands, restart: start }
 }
 
 type Ui = Awaited<ReturnType<typeof bandOver>>['ui']
@@ -554,6 +608,7 @@ const settle = async (until: () => Promise<boolean>) => {
   for (let i = 0; i < 50 && !(await until()); i++) await Promise.resolve()
 }
 
+const READY_SETUP = { setup: { v: 1, doneAt: 1, focus: null }, files: {}, env: { HOME: '/home/n' } }
 const SETUP_FILE = (path: string) => ({ v: 1, doneAt: 1, focus: { kind: 'file', path } })
 
 // ---- Adapted: the Focus source and the home directory ------------------------------------
@@ -568,14 +623,20 @@ test('FR-2 c3: a named file is read and its Primary shown', async ($, on) => {
 test('FR-2 c3: a file that cannot be read says so in plain words', async ($, on) => {
   const { ui } = await bandOver($, on, { setup: SETUP_FILE('/data/gone.md'), files: {}, env: { HOME: '/home/n' } })
 
-  expect(await primaryOf(ui)).toBe('◎ Focus file not readable')
+  // No usable Primary: the PRIMARY row says why and offers the field and "Set".
+  expect(await primaryOf(ui)).toBeUndefined()
+  expect(await texts(ui)).toContain('PRIMARY')
+  expect(await texts(ui)).toContain('Focus file not readable')
+  expect(await keyOf(ui, 'Set')).toBe('primary-set')
   await ui.unmount()
 })
 
 test('FR-2 c4: with no Focus source saved, the row reads "no Primary set" and no file is read', async ($, on) => {
   const { ui, reads } = await bandOver($, on, { setup: { v: 1, doneAt: 1, focus: null }, files: {}, env: { HOME: '/home/n' } })
 
-  expect(await primaryOf(ui)).toBe('◎ no Primary set')
+  expect(await primaryOf(ui)).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^PRIMARY$/ })).toBeDefined()
+  expect(await keyOf(ui, 'Set')).toBe('primary-set')
   expect(reads).toEqual([])
   await ui.unmount()
 })
@@ -583,7 +644,9 @@ test('FR-2 c4: with no Focus source saved, the row reads "no Primary set" and no
 test('FR-2 c4: with no home directory the band still draws and reads no file', async ($, on) => {
   const { ui, reads } = await bandOver($, on, { setup: { v: 1, doneAt: 1, focus: null }, files: {}, env: {} })
 
-  expect(await primaryOf(ui)).toBe('◎ no Primary set')
+  expect(await primaryOf(ui)).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^PRIMARY$/ })).toBeDefined()
+  expect(await keyOf(ui, 'Set')).toBe('primary-set')
   expect(reads).toEqual([])
   await ui.unmount()
 })
@@ -593,7 +656,8 @@ test('FR-2 c4: with no home directory the band still draws and reads no file', a
 test('FR-1 c1: with no saved setup the Setup moment shows and none of the usual rows', async ($, on) => {
   const { ui } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
 
-  expect(await texts(ui)).toContain('Coanda asks once')
+  expect(await texts(ui)).toContain('SETUP · 1 OF 2')
+  expect(await texts(ui)).toContain('Where are your goals written?')
   expect(await primaryOf(ui)).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /^NOW$/ })).toBeUndefined()
   await ui.unmount()
@@ -602,26 +666,29 @@ test('FR-1 c1: with no saved setup the Setup moment shows and none of the usual 
 test('FR-1 c2: finished or skipped, the usual rows show and the Setup moment does not come back', async ($, on) => {
   const { ui, restart, saved } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
 
-  await ui.press({ key: 'setup-next' }) // Skip: the only step
-  expect(await primaryOf(ui)).toBe('◎ no Primary set')
-  expect(await ui.find({ type: 'Text', text: /Coanda asks once/ })).toBeUndefined()
+  await ui.press({ key: 'setup-next' }) // Skip the goals file
+  expect(await texts(ui)).toContain('SETUP · 2 OF 2')
+  await ui.press({ key: 'setup-next' }) // Skip the Lanes: the last step
+  expect(await ui.find({ type: 'Text', text: /^PRIMARY$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^SETUP ·/ })).toBeUndefined()
   expect(saved.setup).toMatchObject({ v: 1, lanes: [], focus: null })
   expect(typeof (saved.setup as { doneAt: unknown }).doneAt).toBe('number')
   // A reload (a new session start) reads the saved setup: still the usual rows.
   await restart()
-  expect(await ui.find({ type: 'Text', text: /Coanda asks once/ })).toBeUndefined()
-  expect(await primaryOf(ui)).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^SETUP ·/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^PRIMARY$/ })).toBeDefined()
   await ui.unmount()
 })
 
 test('FR-2 c1: a path starting with ~/ is stored absolute; its Primary shows after setup', async ($, on) => {
   const { ui, saved } = await bandOver($, on, { setup: undefined, files: { '/home/n/goals.md': 'Ship the intake form\n' }, env: { HOME: '/home/n' } })
 
-  await ui.input({ key: 'setup-file', text: '~/goals.md', kind: 'change' })
-  await ui.press({ key: 'setup-file-use' })
+  // Enter in the field is the one way to submit.
+  await ui.input({ key: 'setup-file', text: '~/goals.md', kind: 'submit' })
   expect(saved.setup).toMatchObject({ focus: { kind: 'file', path: '/home/n/goals.md' } })
   expect(await texts(ui)).toContain('Ship the intake form')
-  await ui.press({ key: 'setup-next' })
+  await ui.press({ key: 'setup-next' }) // Next
+  await ui.press({ key: 'setup-next' }) // Done: a file is kept, so the last step finishes
   expect(await primaryOf(ui)).toBe('◎ Ship the intake form')
   await ui.unmount()
 })
@@ -629,8 +696,7 @@ test('FR-2 c1: a path starting with ~/ is stored absolute; its Primary shows aft
 test('FR-2 c1: any other relative path is refused in plain words and nothing is saved', async ($, on) => {
   const { ui, saved, reads } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
 
-  await ui.input({ key: 'setup-file', text: 'goals.md', kind: 'change' })
-  await ui.press({ key: 'setup-file-use' })
+  await ui.input({ key: 'setup-file', text: 'goals.md', kind: 'submit' })
   expect(await texts(ui)).toContain('relative path')
   expect(saved.setup).toBeUndefined()
   expect(reads).not.toContain('goals.md')
@@ -642,8 +708,7 @@ test('FR-2 c1: any other relative path is refused in plain words and nothing is 
 test('FR-2 c1: a file that cannot be read at setup says so in plain words', async ($, on) => {
   const { ui, saved } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
 
-  await ui.input({ key: 'setup-file', text: '/data/gone.md', kind: 'change' })
-  await ui.press({ key: 'setup-file-use' })
+  await ui.input({ key: 'setup-file', text: '/data/gone.md', kind: 'submit' })
   expect(await texts(ui)).toContain('That file cannot be read: /data/gone.md')
   expect(saved.setup).toBeUndefined()
   await ui.unmount()
@@ -651,10 +716,11 @@ test('FR-2 c1: a file that cannot be read at setup says so in plain words', asyn
 
 test('FR-2 c2: 1 to 3 Lanes are kept, each with an outcome, an optional end date and its own id', async ($, on) => {
   const { ui, saved } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
+  await ui.press({ key: 'setup-next' }) // Skip the goals file: the Lanes step
+  // The end date first, then Enter in the outcome field adds the Lane.
   const add = async (lane: string, end = '') => {
-    await ui.input({ key: 'setup-lane', text: lane, kind: 'change' })
     await ui.input({ key: 'setup-end', text: end, kind: 'change' })
-    await ui.press({ key: 'setup-lane-add' })
+    await ui.input({ key: 'setup-lane', text: lane, kind: 'submit' })
   }
 
   await add('portfolio live', '2026-12-14')
@@ -683,8 +749,8 @@ test('FR-2 c2: 1 to 3 Lanes are kept, each with an outcome, an optional end date
 test('FR-2 c2: a bare label such as "Lane 2" is refused with a hint to write its outcome', async ($, on) => {
   const { ui, saved } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
 
-  await ui.input({ key: 'setup-lane', text: 'Lane 2', kind: 'change' })
-  await ui.press({ key: 'setup-lane-add' })
+  await ui.press({ key: 'setup-next' })
+  await ui.input({ key: 'setup-lane', text: 'Lane 2', kind: 'submit' })
   expect(await texts(ui)).toContain('a label, not an outcome')
   // The hint's example carries no date, so a typed end date is not shown twice.
   expect(await texts(ui)).not.toContain('portfolio live by 14 Dec')
@@ -698,8 +764,8 @@ test('FR-2 c2: a bare label such as "Lane 2" is refused with a hint to write its
 test('FR-2 c3: the Lanes are kept across sessions', async ($, on) => {
   const { ui, restart } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
 
-  await ui.input({ key: 'setup-lane', text: 'portfolio live', kind: 'change' })
-  await ui.press({ key: 'setup-lane-add' })
+  await ui.press({ key: 'setup-next' })
+  await ui.input({ key: 'setup-lane', text: 'portfolio live', kind: 'submit' })
   // A new session before the setup was finished: the Setup moment is back with its Lane kept.
   await restart()
   expect(await texts(ui)).toContain('1. portfolio live')
@@ -709,10 +775,237 @@ test('FR-2 c3: the Lanes are kept across sessions', async ($, on) => {
 test('FR-1: typed text survives a redraw while the ticks run', async ($, on) => {
   const { ui, restart } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n' } })
 
+  await ui.press({ key: 'setup-next' })
   await ui.input({ key: 'setup-lane', text: 'half a Lane', kind: 'change' })
   await restart() // the session start redraws the band and re-reads the store
   expect(JSON.stringify(await ui.drawn())).toContain('half a Lane')
   await ui.unmount()
+})
+
+test('/coanda-setup opens Setup again at step 1, with what was kept; Skip or Done closes it', async ($, on) => {
+  const { ui, commands, saved } = await bandOver($, on, { setup: SETUP_FILE('/data/goals.md'), files: { '/data/goals.md': 'Ship the intake form\n' }, env: { HOME: '/home/n' } })
+
+  expect(commands).toEqual(['coanda-setup', 'coanda-specimen', 'coanda-grid'])
+  expect(await primaryOf(ui)).toBe('◎ Ship the intake form')
+  await $.command.run({ command: 'coanda-setup' } as never)
+  expect(await texts(ui)).toContain('SETUP · 1 OF 2')
+  expect(await texts(ui)).toContain('Reading: /data/goals.md')
+  expect(await primaryOf(ui)).toBeUndefined()
+
+  await ui.press({ key: 'setup-next' }) // Next: a file is kept
+  expect(await texts(ui)).toContain('SETUP · 2 OF 2')
+  await ui.press({ key: 'setup-next' }) // Done
+  expect(await ui.find({ type: 'Text', text: /^SETUP ·/ })).toBeUndefined()
+  expect(await primaryOf(ui)).toBe('◎ Ship the intake form')
+  // Nothing kept was lost on the way.
+  expect(saved.setup).toMatchObject({ focus: { kind: 'file', path: '/data/goals.md' } })
+  await ui.unmount()
+})
+
+test('the Primary typed in the band is kept for today; tomorrow the band asks again', async ($, on) => {
+  const { ui, saved, clock } = await bandOver($, on, { setup: { v: 1, doneAt: 1, focus: null }, files: {}, env: { HOME: '/home/n' }, now: THEN })
+
+  // An empty field sets nothing.
+  await ui.press({ key: 'primary-set' })
+  expect(saved.primary).toBeUndefined()
+  await ui.input({ key: 'primary-input', text: '  Ship the   band ', kind: 'change' })
+  await ui.press({ key: 'primary-set' })
+  expect(saved.primary).toMatchObject({ v: 1, text: 'Ship the band', day: '2026-11-12' })
+  expect(await primaryOf(ui)).toBe('◎ Ship the band')
+  expect(await ui.find({ type: 'Text', text: /^PRIMARY$/ })).toBeUndefined()
+
+  // The next day it no longer counts: the PRIMARY row is back; Enter in the field sets it too.
+  await clock!.advance(24 * 3600 * 1000)
+  expect(await primaryOf(ui)).toBeUndefined()
+  await ui.input({ key: 'primary-input', text: 'Write the tests', kind: 'submit' })
+  expect(await primaryOf(ui)).toBe('◎ Write the tests')
+  await ui.unmount()
+})
+
+test('/coanda-specimen shows every drawing option, then hides it again', async ($, on) => {
+  const { ui } = await bandOver($, on, READY_SETUP)
+
+  await $.command.run({ command: 'coanda-specimen' } as never)
+  expect(await texts(ui)).toContain('COANDA SPECIMEN')
+  expect(await texts(ui)).toContain('B8 Dusk box + plain Button white Text')
+  await $.command.run({ command: 'coanda-specimen' } as never)
+  expect(await texts(ui)).not.toContain('COANDA SPECIMEN')
+  await ui.unmount()
+})
+
+test('/coanda-grid shows the grid page, then hides it again', async ($, on) => {
+  const { ui } = await bandOver($, on, READY_SETUP)
+
+  await $.command.run({ command: 'coanda-grid' } as never)
+  expect(await texts(ui)).toContain('COANDA GRID · run /coanda-grid again to hide')
+  expect(await texts(ui)).toContain('V2 paddingY steps on a tinted box (height of the box minus one text line = 2 x step)')
+  await $.command.run({ command: 'coanda-grid' } as never)
+  expect(await texts(ui)).not.toContain('COANDA GRID · run /coanda-grid again to hide')
+  await ui.unmount()
+})
+
+test('Setup opens with the lamp: dark with one button, pulled it plays once, then the plain band stays', async ($, on) => {
+  const { ui, clock } = await bandOver($, on, { setup: { v: 1, doneAt: null, focus: null }, files: {}, env: { HOME: '/home/n' }, now: THEN })
+  const drawn = async () => JSON.stringify(await ui.drawn())
+
+  // Dark: the layer and the one button are there; the real Setup is drawn under them.
+  expect(await drawn()).toContain('"key":"lamp-layer"')
+  expect(await drawn()).toContain('"key":"lamp-pull"')
+  expect(await drawn()).toContain('"position":"absolute"')
+  expect(await texts(ui)).toContain('SETUP · 1 OF 2')
+
+  // Pulled: the button goes; the native cover and the layer are both there, so Setup never shows in between.
+  await ui.press({ key: 'lamp-pull' })
+  expect(await drawn()).not.toContain('"key":"lamp-pull"')
+  expect(await drawn()).toContain('"key":"lamp-cover"')
+  expect(await drawn()).toContain('"key":"lamp-layer"')
+
+  // The cover goes first (the drawing is loaded by then); the layer stays while the light plays.
+  await clock!.advance(700)
+  expect(await drawn()).not.toContain('"key":"lamp-cover"')
+  expect(await drawn()).toContain('"key":"lamp-layer"')
+
+  // One timer later the layer is gone and Setup is the plain band (no wrapper left to block anything).
+  await clock!.advance(3000)
+  expect(await drawn()).not.toContain('"key":"lamp-layer"')
+  expect(await drawn()).not.toContain('"key":"lamp-stage"')
+  expect(await texts(ui)).toContain('SETUP · 1 OF 2')
+
+  // Every time Setup runs: /coanda-setup plays it again.
+  await $.command.run({ command: 'coanda-setup' } as never)
+  expect(await drawn()).toContain('"key":"lamp-pull"')
+  await ui.unmount()
+})
+
+test('/coanda-stage: boxes are 9 rows; the light layer (an absolute Box) shows while playing and is removed by one timer', async ($, on) => {
+  const { ui, clock } = await bandOver($, on, { ...READY_SETUP, now: THEN })
+
+  await $.command.run({ command: 'coanda-stage' } as never)
+  expect(await texts(ui)).toContain('COANDA STAGE · run /coanda-stage again to hide')
+  expect(JSON.stringify(await ui.drawn())).not.toContain('"type":"Client"')
+  expect(JSON.stringify(await ui.drawn())).not.toContain('"key":"ov-a"')
+  await ui.press({ key: 'stage-play' })
+  expect(JSON.stringify(await ui.drawn())).toContain('"key":"ov-a"')
+  expect(JSON.stringify(await ui.drawn())).toContain('"position":"absolute"')
+  await clock!.advance(2700)
+  expect(JSON.stringify(await ui.drawn())).not.toContain('"key":"ov-a"')
+  await $.command.run({ command: 'coanda-stage' } as never)
+  expect(await texts(ui)).not.toContain('COANDA STAGE · run /coanda-stage again to hide')
+  await ui.unmount()
+})
+
+test('/coanda-light shows the lamp alone; the cord toggles it; hiding puts it back unlit', async ($, on) => {
+  const { ui } = await bandOver($, on, READY_SETUP)
+
+  await $.command.run({ command: 'coanda-light' } as never)
+  expect(await texts(ui)).toContain('COANDA LIGHT · run /coanda-light again to hide')
+  expect(JSON.stringify(await ui.drawn())).toContain('Pull the cord')
+  expect(JSON.stringify(await ui.drawn())).not.toContain('"type":"Client"')
+  await ui.press({ key: 'light-pull' })
+  expect(JSON.stringify(await ui.drawn())).toContain('Turn it off')
+  await $.command.run({ command: 'coanda-light' } as never)
+  expect(await texts(ui)).not.toContain('COANDA LIGHT · run /coanda-light again to hide')
+  await $.command.run({ command: 'coanda-light' } as never)
+  expect(JSON.stringify(await ui.drawn())).toContain('Pull the cord')
+  await ui.unmount()
+})
+
+test('/coanda-lab shows the capability tests, then hides them again', async ($, on) => {
+  const { ui } = await bandOver($, on, READY_SETUP)
+
+  await $.command.run({ command: 'coanda-lab' } as never)
+  expect(await texts(ui)).toContain('COANDA LAB · run /coanda-lab again to hide')
+  await $.command.run({ command: 'coanda-lab' } as never)
+  expect(await texts(ui)).not.toContain('COANDA LAB · run /coanda-lab again to hide')
+  await ui.unmount()
+})
+
+// ---- Must hold on screen (docs/design/band-mapping.md): the drawn band, not its words ---------
+// Each point was settled on screen; this test fails before a regression reaches the screen.
+
+type Drawn = { type: string; props?: Record<string, unknown>; children?: unknown[] }
+const isNode = (one: unknown): one is Drawn => typeof one === 'object' && one !== null && typeof (one as Drawn).type === 'string'
+
+// Every node with the chain of Boxes above it.
+function nodesOf(root: unknown): { node: Drawn; above: Drawn[] }[] {
+  const out: { node: Drawn; above: Drawn[] }[] = []
+  const walk = (one: unknown, above: Drawn[]) => {
+    if (!isNode(one)) return
+    out.push({ node: one, above })
+    for (const child of one.children ?? []) walk(child, [...above, one])
+  }
+  walk(root, [])
+
+  return out
+}
+
+const QUIET = /-later$|^asked-dismiss$|^primary-details$|^setup-lane-remove-/
+
+// What every drawn moment must hold; returns the broken points, empty when all hold.
+function mustHold(root: unknown): string[] {
+  const all = nodesOf(root)
+  const broken: string[] = []
+
+  if (JSON.stringify(root).includes('"engine"')) broken.push('the host default drawing (engine node) is drawn')
+  const frames = all.filter(({ node }) => node.type === 'Box' && node.props?.borderStyle === 'round' && node.props?.paddingX === 1)
+  for (const { node } of frames) if (node.props?.width !== BAND.props.bodyColumns) broken.push(`frame width ${String(node.props?.width)}, not the full width`)
+
+  for (const { node, above } of all) {
+    const props = node.props ?? {}
+    // Labels: 16 cells; their row aligned to the top.
+    if (node.type === 'Box' && props.width === LABEL_WIDTH) {
+      const rowBox = above[above.length - 1]
+      if (rowBox?.props?.alignItems !== 'flex-start') broken.push('a row is not aligned to the top')
+    }
+    // Fields: two rows tall (full width, seen A8), no chip name (no chip, seen A5).
+    if (node.type === 'Input') {
+      if (props.rows !== 2) broken.push(`field ${String(props.key)} is not 2 rows tall`)
+      if ('submitLabel' in props) broken.push(`field ${String(props.key)} names its chip`)
+    }
+    if (node.type === 'Button') {
+      const key = String(props.key)
+      const isQuiet = QUIET.test(key) || props.label === 'Skip'
+      // Quiet exits: plain and dim (B5). Everything else: a native primary or secondary (B1, B2).
+      if (isQuiet && !(props.plain === true && props.dimColor === true)) broken.push(`${key} is not a plain, dim quiet exit`)
+      if (!isQuiet && props.variant !== 'primary' && props.variant !== 'secondary') broken.push(`${key} is not a native button`)
+      if (['primary-set', 'setup-file-use', 'setup-lane-add'].includes(key) && props.variant !== 'primary') broken.push(`${key} is not primary`)
+      // No button inside a painted contour (Nicolas, 16:57).
+      // The lamp's one button is the exception: it sits on the dark layer and needs an edge to be seen (14 Nov).
+      if (key !== 'lamp-pull' && above.some(box => box.props?.borderColor !== undefined)) broken.push(`${key} sits inside a painted contour`)
+    }
+  }
+
+  return broken
+}
+
+test('must hold on screen: every moment keeps the settled layout, buttons and fields', async ($, on) => {
+  const { ui, model } = await bandOver($, on, READY_SETUP)
+  const check = async (moment: string) => expect({ moment, broken: mustHold(await ui.drawn()) }).toEqual({ moment, broken: [] })
+
+  await check('resting, PRIMARY row')
+  await ask($, 'Band or panel?', ['Band', 'Panel'], { hard_to_undo: true })
+  await check('small choice')
+  // First option primary, the other secondary, as in Intent.
+  const variants = nodesOf(await ui.drawn()).filter(({ node }) => node.type === 'Button').map(({ node }) => [node.props?.label, node.props?.variant ?? 'plain'])
+  expect(variants.slice(0, 3)).toEqual([['Band', 'primary'], ['Panel', 'secondary'], ['Later', 'plain']])
+  await ui.press({ key: (await keyOf(ui, 'Later'))! })
+  model.text = '{"moment":"question","question":"Ship it now?","suggestions":[{"label":"Ship it","prompt":"Ship it."},{"label":"Wait","prompt":"Wait."}]}'
+  await done($, 'tg', 'Ship it?')
+  await settle(async () => (await ui.find({ type: 'Text', text: /Ship it now/ })) !== undefined)
+  await check('guessed question')
+  await ui.press({ key: 'asked-dismiss' })
+  await $.command.run({ command: 'coanda-setup' } as never)
+  await check('setup step 1')
+  await ui.press({ key: 'setup-next' })
+  await ui.input({ key: 'setup-lane', text: 'portfolio live', kind: 'submit' })
+  await check('setup step 2 with a Lane')
+  await ui.unmount()
+
+  // The guard itself catches a regression.
+  expect(mustHold({ type: 'Box', props: { borderColor: '#5663A8' }, children: [{ type: 'Button', props: { key: 'x-o0', plain: true, label: 'A' } }] })).toEqual([
+    'x-o0 is not a native button',
+    'x-o0 sits inside a painted contour',
+  ])
 })
 
 // ---- Adapted (FR-7): the Primary row and its Lane, behind "Details" -------------------------
@@ -733,12 +1026,12 @@ async function rowOf(ui: Ui) {
 }
 
 // One band per test (hooks register once); the file is changed and the 60-second tick shows it.
-async function bandOnFile($: Parameters<TestBody>[0], on: Parameters<TestBody>[1], first: string) {
+async function bandOnFile($: Parameters<TestBody>[0], on: Parameters<TestBody>[1], first: string, openDetails = true) {
   const files: Record<string, string> = { '/data/focus.md': first }
   const made = await bandOver($, on, { setup: SETUP_FILE('/data/focus.md'), files, env: { HOME: '/home/n' }, now: THEN })
   // The Lane is behind "Details" (v3 rule 6): open it once; it stays open across redraws.
   expect(await rowOf(made.ui)).toMatchObject({ lane: '' })
-  await made.ui.press({ key: 'primary-details' })
+  if (openDetails) await made.ui.press({ key: 'primary-details' })
   const show = async (text: string, ms = 60_000) => {
     files['/data/focus.md'] = text
     await made.clock!.advance(ms)
@@ -811,9 +1104,12 @@ test('FR-7 c4: a Lane id that matches no Lane, or no Lanes at all, shows the Pri
 })
 
 test('FR-7 c5: a closed Primary in the focus-md format reads "Closed HH:MM · no Primary set", with no Lane', async ($, on) => {
-  const { ui } = await bandOnFile($, on, todayWith('**Primary (12 Nov, N): Coanda, Lane 2. CLOSED 12 Nov 14:05 (N): done.**'))
+  const { ui } = await bandOnFile($, on, todayWith('**Primary (12 Nov, N): Coanda, Lane 2. CLOSED 12 Nov 14:05 (N): done.**'), false)
 
-  expect(await rowOf(ui)).toEqual({ primary: '◎ Closed 14:05 · no Primary set', lane: '' })
+  // Closed: no goal to show, so the PRIMARY row says so and offers to set today's.
+  expect(await rowOf(ui)).toEqual({ primary: '', lane: '' })
+  expect(await texts(ui)).toContain('Closed 14:05 · no Primary set')
+  expect(await keyOf(ui, 'Set')).toBe('primary-set')
   await ui.unmount()
 })
 
@@ -826,7 +1122,7 @@ const done = ($: Parameters<TestBody>[0], turnId: string, answer = '') => $.turn
 const cardsIn = (saved: Record<string, unknown>) => (saved.cards as { items: Card[] } | undefined)?.items ?? []
 
 test('a decision card: its options and consequences show, one press sends one message, "Later" brings the next', async ($, on) => {
-  const { ui, sent, toasts, saved } = await bandOver($, on, { ...READY, below: true })
+  const { ui, sent, toasts, saved } = await bandOver($, on, READY)
 
   expect(JSON.stringify(await ask($, 'Band or panel?', ['Band', 'Panel'], { hard_to_undo: true }))).toContain('Question added')
   expect(toasts).toEqual(['New decision: Band or panel?'])
@@ -836,12 +1132,13 @@ test('a decision card: its options and consequences show, one press sends one me
 
   expect((await ui.find({ type: 'Text', text: /^QUESTION$/ }))?.text).toBe('QUESTION')
   expect((await ui.find({ type: 'Text', text: /Band or panel/ }))?.text).toBe('Band or panel?')
-  expect((await ui.find({ type: 'Text', text: /hard to undo/ }))?.text).toBe('⚠ hard to undo')
+  // The system's badge: a mark and words, padded as a pill.
+  expect((await ui.find({ type: 'Text', text: /Hard to undo/ }))?.text).toBe('⚠ Hard to undo')
   expect((await ui.find({ type: 'Text', text: /^then Band$/ }))?.text).toBe('then Band')
   // The options, the quiet exit, the Primary row's Details: no "Something else", no generic "go".
   expect(await buttonsOf(ui)).toEqual(['Band', 'Panel', 'Later', 'Details'])
-  // Another mod's band draws below ours.
-  expect((await ui.find({ type: 'Text', text: /^below$/ }))?.text).toBe('below')
+  // Only Coanda's row: the host's default drawing of it (an engine node) is not drawn under ours.
+  expect(JSON.stringify(await ui.drawn())).not.toContain('"engine"')
 
   await ui.press({ key: (await keyOf(ui, 'Band'))! })
   expect(sent).toEqual(['Decision: Band or panel? → Band'])

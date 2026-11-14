@@ -91,7 +91,9 @@ export type Setup = {
 export type Cards = { v: 1; items: Card[] }
 // What the person has typed in the Setup moment and not yet kept, and what the last press said back.
 // Lives in $.state so a redraw keeps the text.
-export type SetupDraft = { file: string; lane: string; end: string; fileNote: string; laneNote: string }
+export type SetupDraft = { file: string; lane: string; end: string; primary: string; fileNote: string; laneNote: string }
+// The Primary typed in the band, kept for the day it was set (`day`: dayKey, the machine's own time zone).
+export type TypedPrimary = { v: 1; day: string; text: string; setAt: number }
 export type DayEntry = { id: string; text: string; laneId: string; laneOutcome: string; sessionId: string; setAt: number; doneAt?: number; switchedAt?: number }
 export type Day = { v: 1; days: Record<string, DayEntry[]> } // key: dayKey(ms)
 export type Drafts = { v: 1; days: Record<string, { written: number; skipped: number }> }
@@ -128,7 +130,8 @@ export type BandAction =
   | { kind: 'dismiss' } // "Not for me" on a guessed question: the guess is dropped, nothing is sent
   | { kind: 'details' } // the Primary row's "Details": the "done when" line and the Lane
   // The Setup moment. `value` is what the field holds; `submit` is Enter in the field.
-  | { kind: 'setupType'; field: 'file' | 'lane' | 'end'; value: string; submit?: true }
+  | { kind: 'setupType'; field: 'file' | 'lane' | 'end' | 'primary'; value: string; submit?: true }
+  | { kind: 'primarySet' } // "Set" after the Primary field: today's Primary, typed in the band
   | { kind: 'setupFile' } // "Use this file"
   | { kind: 'setupAddLane' } // "Add Lane"
   | { kind: 'setupRemoveLane'; laneId: string }
@@ -149,11 +152,13 @@ export type BandRow = {
   label?: string
   text: string[]
   source?: Exclude<LineSource, 'tool'> | 'stale'
-  chip?: 'hard to undo'
+  chip?: 'Hard to undo'
   inputs?: BandInput[]
   buttons: BandButton[]
 }
-export type BandInput = { key: string; kind: 'text' | 'select'; value: string; options?: string[]; placeholder?: string; action: BandAction }
+// `submitLabel`: what Enter does, drawn by the host beside the field (one way to submit).
+// `button`: the field's submit, drawn as a button element right after it (band-mapping.md, 12).
+export type BandInput = { key: string; kind: 'text' | 'select'; value: string; options?: string[]; placeholder?: string; submitLabel?: string; button?: { key: string; label: string; action: BandAction }; action: BandAction }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -174,6 +179,21 @@ declare module 'claude-code' {
       setupStep: number
       setupDraft: SetupDraft
       detailsOpen: boolean
+      typedPrimary: TypedPrimary | null
+      specimen: boolean
+      grid: boolean
+      lab: boolean
+      labPresses: number
+      labPosts: number
+      labLit: boolean
+      lamp: 'off' | 'dark' | 'playing' | 'revealing'
+      stage: boolean
+      stagePlaying: boolean
+      stagePlays: number
+      stageOver: number
+      stageUnder: number
+      light: boolean
+      lightLit: boolean
     }
   }
 }

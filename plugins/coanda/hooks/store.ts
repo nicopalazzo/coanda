@@ -1,9 +1,9 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { Card, DecisionStatus, Lane, Setup } from '../types'
+import type { Card, DecisionStatus, Lane, Setup, TypedPrimary } from '../types'
 import { close, supersede, toBottom } from './cards'
 import { focusSourceOf, toSetup } from './focus'
-import { getCards, updateCards, updateSetupSeen } from './state'
+import { getCards, updateCards, updateSetupSeen, updateTypedPrimary } from './state'
 
 // What the person keeps across sessions lives in $.store: the setup and the decision cards.
 // Each document carries `v: 1`. The store starts empty: nothing from an older plugin is read.
@@ -92,4 +92,25 @@ export async function closeCard($: Keeper, id: string, status: Exclude<DecisionS
 // "Later": the card is deferred and goes to the back of the list.
 export async function deferCard($: Keeper, id: string, now: number) {
   await saveCards($, await updateCards($, all => toBottom(all.map(one => (one.id === id ? close(one, 'deferred', now) : one)), id)))
+}
+
+// Today's Primary typed in the band: one document `{ v: 1, day, text, setAt }`, read at session
+// start and replaced by each "Set". The band shows it only on the day it was set.
+const isTypedPrimary = (one: unknown): one is TypedPrimary => {
+  const doc = one as TypedPrimary | null
+  return doc?.v === 1 && typeof doc.day === 'string' && typeof doc.text === 'string' && doc.text !== '' && typeof doc.setAt === 'number'
+}
+
+export async function loadTypedPrimary($: Keeper): Promise<TypedPrimary | null> {
+  const raw = await $.store.get('primary')
+  const found = isTypedPrimary(raw) ? raw : null
+  await updateTypedPrimary($, () => found)
+
+  return found
+}
+
+export async function setTypedPrimary($: Keeper, text: string, day: string, setAt: number) {
+  const doc: TypedPrimary = { v: 1, day, text, setAt }
+  await $.store.set('primary', doc)
+  await updateTypedPrimary($, () => doc)
 }

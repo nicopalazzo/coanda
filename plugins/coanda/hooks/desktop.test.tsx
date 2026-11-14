@@ -5,6 +5,7 @@ test('the band draws on desktop', async ($, on) => {
   on('store.get', () => ({ value: null }))
   on('store.set', () => ({ value: undefined }))
   on('session.id', () => ({ value: 's1' }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('clock.now', () => ({ value: 1_000_000 }))
   on('clock.every', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
