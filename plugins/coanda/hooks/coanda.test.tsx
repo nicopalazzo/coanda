@@ -1959,3 +1959,149 @@ test('together: at 18:30 the day record comes first, then the shutdown question,
   expect(rowsOf(bandModel(snap({ ...day, isWorking: true }))).moment).toBe('working')
   expect(rowsOf(bandModel(snap({ ...day, cards: [cardOf('c1')] }))).moment).toBe('pick')
 })
+
+// ---- Row budget: every screen fits the band's room (band-rebuild-plan.md, R12) -----------------------
+
+// A placed screen is one stage Box whose height is its row count (layout.tsx, placeScreen). The plan's rule
+// R12: at most 9 rows in all (heading and its line 2, the content, the Primary line). A screen that grows past
+// it would be cut or scroll on the desktop, which a test host never shows, so the count is checked here.
+export const MAX_ROWS = 9
+
+// The row count of every placed stage in a drawn tree; empty when the tree holds none.
+function stageRows(root: unknown): number[] {
+  return nodesOf(root)
+    .filter(({ node }) => node.type === 'Box' && node.props?.key === 'placed-stage')
+    .map(({ node }) => Number(node.props?.height))
+}
+
+// Screens known to be over the budget today, with the count they have now (found by this test on 14 Nov 2026, not
+// yet redesigned). A known screen may not grow; when one shrinks or fits, its entry must go, so the list only ever
+// gets shorter. Nothing else may be over.
+const KNOWN_OVER: Record<string, number> = {
+  'question, 2 options with consequences': 10,
+  'question, 3 options with consequences, hard to undo': 11,
+}
+
+// The screens over the budget, as "name: n rows"; empty when all fit. A screen that draws no stage is a mistake too.
+function overRows(name: string, root: unknown): string[] {
+  const rows = stageRows(root)
+  if (rows.length === 0) return [`${name}: no placed stage drawn`]
+
+  const known = KNOWN_OVER[name]
+
+  return rows.flatMap(n => {
+    if (known === undefined) return n <= MAX_ROWS ? [] : [`${name}: ${n} rows, over ${MAX_ROWS}`]
+    if (n > known) return [`${name}: grew to ${n} rows (it was known at ${known})`]
+    if (n < known) return [`${name}: now ${n} rows, was known at ${known}: lower or remove its KNOWN_OVER entry`]
+
+    return []
+  })
+}
+
+test('row budget: the guard counts the placed stage and catches an overfull screen', () => {
+  const stage = (height: number) => ({ type: 'Box', props: { key: 'placed-stage', height }, children: [] })
+
+  expect(stageRows(stage(7))).toEqual([7])
+  expect(overRows('fits', stage(MAX_ROWS))).toEqual([])
+  expect(overRows('too tall', stage(MAX_ROWS + 1))).toEqual(['too tall: 10 rows, over 9'])
+  // A known screen may stay as it is, not grow, and must be taken off the list once it shrinks.
+  expect(overRows('question, 3 options with consequences, hard to undo', stage(11))).toEqual([])
+  expect(overRows('question, 3 options with consequences, hard to undo', stage(12))).toEqual(['question, 3 options with consequences, hard to undo: grew to 12 rows (it was known at 11)'])
+  expect(overRows('question, 3 options with consequences, hard to undo', stage(9))[0]).toContain('remove its KNOWN_OVER entry')
+  expect(overRows('empty', { type: 'Box', children: [] })).toEqual(['empty: no placed stage drawn'])
+})
+
+test('row budget: the screens of the band (resting, Details, questions, Sent, Working) fit 9 rows', async ($, on) => {
+  const { ui, model, sent } = await bandOver($, on, { setup: SETUP_FILE('/data/goals.md'), files: { '/data/goals.md': GOALS_TEXT }, env: { HOME: '/home/n' } })
+  const over: string[] = []
+  const check = async (name: string) => void over.push(...overRows(name, await ui.drawn()))
+
+  await check('resting')
+  await ui.press({ key: 'primary-details' })
+  await check('resting, Details open')
+  await ui.press({ key: 'primary-details' })
+
+  await ask($, 'Rename fill2?', ['Rename', 'Keep'])
+  await check('question, 2 options with consequences')
+  await ui.press({ key: (await keyOf(ui, 'Later'))! })
+
+  await ask($, 'Band or panel?', ['Band', 'Panel', 'Both'], { hard_to_undo: true, facts: ['a', 'b'], could_be_wrong_if: 'testers share a machine' })
+  await check('question, 3 options with consequences, hard to undo')
+  await ui.press({ key: (await keyOf(ui, 'Later'))! })
+
+  model.text = '{"moment":"question","question":"Ship it now?","suggestions":[{"label":"Ship it","prompt":"Ship it."},{"label":"Wait","prompt":"Wait."},{"label":"Ask first","prompt":"Ask first."}]}'
+  await done($, 'tg', 'Ship it?')
+  await settle(async () => (await ui.find({ type: 'Text', text: /Ship it now/ })) !== undefined)
+  await check('guessed question')
+  await ui.press({ key: (await keyOf(ui, 'Ship it'))! })
+  expect(sent).toHaveLength(1)
+  await check('sent')
+  expect(over).toEqual([])
+  await ui.unmount()
+
+  // Working: a fresh band while a run is on (the test host redraws a mounted band on state changes only).
+  const working = await $.ui.mount({ ...BAND, props: { ...BAND.props, isWorking: true } })
+  expect(overRows('working', await working.drawn())).toEqual([])
+  await working.unmount()
+})
+
+// Setup's first run opens with the lamp, whose stage is 9 rows whatever the content: pull the cord and let it end,
+// so the count is the content's own.
+const lampDone = async (ui: Ui, clock: { advance: (ms: number) => Promise<void> } | null) => {
+  if ((await ui.find({ key: 'lamp-pull' })) !== undefined) await ui.press({ key: 'lamp-pull' })
+  await clock!.advance(4_000)
+}
+
+test('row budget: Setup in every state fits 9 rows (the content, not the lamp stage)', async ($, on) => {
+  const own = { setup: undefined, files: { [GOALS_PATH]: GOALS_TEXT } as Record<string, string>, env: { HOME: '/home/n' }, now: THEN }
+  const { ui, clock } = await bandOver($, on, own)
+  const over: string[] = []
+  const check = async (name: string) => {
+    await lampDone(ui, clock)
+    over.push(...overRows(name, await ui.drawn()))
+  }
+
+  // Goals found: the Goal, 3 Lanes, the buttons.
+  own.files[GOALS_PATH] = `${GOALS_TEXT}- **Lane 3 — Flat:** sell the flat by 20 Dec.\n`
+  await $.command.run({ command: 'coanda-setup' } as never)
+  await check('Setup, goals found (Goal and 3 Lanes)')
+
+  // State 1: Claude was asked.
+  await ui.press({ key: 'setup-change' })
+  await check('Setup, asking Claude')
+  await ui.press({ key: 'setup-skip' })
+
+  // State 4: Claude proposes a Goal and 3 Lanes.
+  await $.command.run({ command: 'coanda-setup' } as never)
+  await $.tool.call({ tool: 'mcp__coanda__propose_goals', goal: 'Finish Coanda', lanes: [1, 2, 3].map(n => ({ name: `Lane ${n}`, outcome: `outcome number ${n}`, by: '14 Dec' })) } as never)
+  await check('Setup, Claude proposes (Goal and 3 Lanes)')
+  await ui.press({ key: 'proposal-drop' })
+
+  // Nothing found.
+  own.files[GOALS_PATH] = ''
+  await $.command.run({ command: 'coanda-setup' } as never)
+  await check('Setup, nothing found')
+  expect(over).toEqual([])
+  await ui.unmount()
+})
+
+test('row budget: Setup with a file that cannot be read fits 9 rows', async ($, on) => {
+  const { ui, clock } = await bandOver($, on, { setup: undefined, files: {}, unreadable: [GOALS_PATH], env: { HOME: '/home/n' }, now: THEN })
+
+  await lampDone(ui, clock)
+  expect(overRows('Setup, file cannot be read', await ui.drawn())).toEqual([])
+  await ui.unmount()
+})
+
+test('row budget: the demo (Setup with its extra button, then Set your Primary) fits 9 rows', async ($, on) => {
+  const own = { setup: MINE.setup, docs: { cards: MINE.cards, primary: MINE.primary }, files: { '/real/FOCUS.md': '## Today\n- **Primary (14 Nov, N): real goal.**\n' }, env: { HOME: '/home/n' }, now: THEN }
+  const { ui, clock } = await bandOver($, on, own)
+
+  await $.command.run({ command: 'coanda-demo' } as never)
+  await lampDone(ui, clock)
+  expect(overRows('Setup, demo, nothing found', await ui.drawn())).toEqual([])
+  await ui.press({ key: 'setup-skip' })
+  // No Primary in the demo's zero state: the band asks for one.
+  expect(overRows('Set your Primary', await ui.drawn())).toEqual([])
+  await ui.unmount()
+})
