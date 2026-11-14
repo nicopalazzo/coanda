@@ -42,3 +42,19 @@ export async function readFocusFile($: Files, path: string): Promise<string> {
 export async function goalsFile($: Places): Promise<string> {
   return `${await claudeConfigDir($)}/goals.md`
 }
+
+// The day record's journal file sits in a `journal` folder next to the goals file the person named in
+// setup: <folder of the goals file>/journal/wins-YYYY-MM.md. No folder is written but that one.
+export function journalPath(focusPath: string, file: string): string {
+  const at = focusPath.lastIndexOf('/')
+
+  return `${at <= 0 ? '' : focusPath.slice(0, at)}/journal/${file}`
+}
+
+// Writes one journal file: the file as it stands (none yet is fine; one that exists and cannot be
+// read stops the write, so nothing is overwritten blind) goes through `change`, and back.
+// $.fs.write replaces the whole file, so this is a read, then a write.
+export async function writeJournal($: Files, path: string, change: (existing: string) => string): Promise<void> {
+  const existing = (await $.fs.exists(path)) ? String(await $.fs.read(path)) : ''
+  await $.fs.write(path, change(existing))
+}

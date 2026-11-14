@@ -31,6 +31,9 @@ const ON_DUSK = '#FFFFFF' // the specimen only (B9)
 const RISK = 'error'
 const WARN = 'warning'
 const OK = 'success'
+// The day record's chips: the Dusk tint (system tint / hover shade), fixed hex.
+const TINT = '#F0F3FE'
+const TINT_INK = '#414C8C'
 
 // The label column, in cells: 16 keeps "SETUP · 2 OF 2" on one line (seen C2).
 export const LABEL_WIDTH = 16
@@ -125,7 +128,7 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
       )
     }
 
-    const isQuestion = r.part === 'question' || r.part === 'setup' || r.part === 'primary' || r.part === 'shutdown'
+    const isQuestion = r.part === 'question' || r.part === 'setup' || r.part === 'primary' || r.part === 'shutdown' || r.part === 'today'
 
     return isQuestion ? (
       <Text weight="semibold" color={INK} wrap="wrap">
@@ -183,6 +186,17 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
                 </Text>
               </Box>
               {r.buttons.filter(b => b.variant === 'link').map(button)}
+            </Box>
+          )}
+          {(r.chips ?? []).length > 0 && (
+            <Box flexDirection="row" flexWrap="wrap" gap={1}>
+              {(r.chips ?? []).map((chip, at) => (
+                <Box key={`chip-${at}`} flexShrink={1} minWidth={0} backgroundColor={TINT} paddingX={1}>
+                  <Text size="caption" color={TINT_INK} wrap="truncate-end">
+                    {chip}
+                  </Text>
+                </Box>
+              ))}
             </Box>
           )}
           {more.map((line, at) => (
@@ -294,6 +308,25 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
                 <Text color={MUTED} wrap="truncate-end">{r.note}</Text>
               </Box>
               {r.buttons.filter(b => b.variant === 'link').map(button)}
+            </Box>
+          ),
+        })
+        y += 1
+      }
+      // The day record's chips: what moved today, one tinted chip each, on one line.
+      if ((r.chips ?? []).length > 0) {
+        items.push({
+          key: `row-${i}-chips`,
+          y,
+          x: INSET,
+          width: inner,
+          node: (
+            <Box flexDirection="row" gap={1}>
+              {(r.chips ?? []).map((chip, at) => (
+                <Box key={`chip-${at}`} flexShrink={1} minWidth={0} backgroundColor={TINT}>
+                  <Text color={TINT_INK} wrap="truncate-end">{` ${chip} `}</Text>
+                </Box>
+              ))}
             </Box>
           ),
         })

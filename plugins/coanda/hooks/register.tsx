@@ -5,7 +5,7 @@ import { BREATHE_AFTER_MS, bandModel } from './band'
 import { ASK_DECISION, answer, toCard } from './cards'
 import { NO_FOCUS, UNREADABLE_FOCUS, goalsState, parseFocus } from './focus'
 import { PROPOSE_GOALS, goalsMessage, proposalMessage, toProposal } from './goals-ask'
-import { goalsFile, readFocusFile } from './io'
+import { goalsFile, journalPath, readFocusFile, writeJournal } from './io'
 import { askReply } from './model'
 import { questionToShow, toAsked } from './next'
 import type { PlanInput } from './plan'
@@ -16,6 +16,7 @@ import { dayKey } from './time'
 import { renderDemo, renderDemoOffer, renderDemoStrip } from './demo'
 import { addSample, backupFound, demoFolder, demoGoalsPath, resetDemo, restoreMine, startDemo, writeDemoGoals } from './demo-run'
 import { noteRun } from './standup'
+import { commitText, headline, journalFile, mergeJournal, newlyCompleted, winsOf } from './wins'
 import { renderBand, renderSpecimen } from './render'
 import { renderGrid } from './grid'
 import { renderLab } from './lab'
@@ -81,6 +82,7 @@ import {
   getShutdownForced,
   updateShutdownDraft,
   updateShutdownForced,
+  getWins,
   updateAsked,
   updateDetailsOpen,
   updateDoneLast,
@@ -99,7 +101,7 @@ import {
   updateSuggestions,
   NO_DRAFT,
 } from './state'
-import { NO_SETUP, addCard, closeCard, deferCard, finishSetup, loadSetup, loadShutdown, loadTypedPrimary, readFocusSource, restore, setFocus, setShutdown, setTypedPrimary } from './store'
+import { NO_SETUP, addCard, answerWins, closeCard, deferCard, finishSetup, loadSetup, loadShutdown, loadTypedPrimary, loadWins, noteWins, openWins, readFocusSource, restore, setFocus, setShutdown, setTypedPrimary } from './store'
 
 // The shell's wiring: one handler per host event, each a short run of named calls; snapshot()
 // gathers what the band reads; dispatch() is the only place a press is carried out.
@@ -216,6 +218,7 @@ async function snapshot($: State & Pick<EngineInterface, 'clock' | 'session' | '
     workingSince: await getWorkStart($),
     standup: await getStandup($),
     shutdown: { doc: await getShutdown($), draft: (await getShutdownDraft($)).text, note: (await getShutdownDraft($)).note, forced: await getShutdownForced($) },
+    wins: await getWins($),
   }
 }
 
@@ -336,6 +339,26 @@ async function goalsKeep($: Presser) {
   await finishSetupMoment($)
 }
 
+// "Save to journal": today's wins go into the month's file next to the goals file. On a failure the
+// wins stay and the button stays; a toast says why.
+async function todaySave($: Presser) {
+  const now = await $.clock.now()
+  const doc = winsOf(await getWins($), now)
+  // The goals file Setup reads (a saved path, else ~/.claude/goals.md; in the demo only the demo folder): the journal sits next to it.
+  const focusPath = (await goalsSource($)).path
+  if (focusPath === null) return void $.ui.toast('Day record: no goals folder found; the journal sits in a journal folder next to the goals file.')
+
+  const path = journalPath(focusPath, journalFile(doc.day))
+  try {
+    await writeJournal($, path, existing => mergeJournal(existing, doc))
+  } catch (err) {
+    return void $.ui.toast(`Day record not saved (${path}): ${String(err instanceof Error ? err.message : err).slice(0, 120)}`)
+  }
+
+  await answerWins($, now)
+  $.ui.toast(`Saved to journal: ${headline(doc.items.length)} (${path})`)
+}
+
 // The only place a press is carried out: one case per BandAction.
 async function dispatch($: Presser, action: BandAction): Promise<void> {
   switch (action.kind) {
@@ -386,6 +409,10 @@ async function dispatch($: Presser, action: BandAction): Promise<void> {
       return goalsKeep($)
     case 'setupSkip':
       return finishSetupMoment($)
+    case 'todaySave':
+      return todaySave($)
+    case 'todaySkip':
+      return answerWins($, await $.clock.now())
   }
 }
 
@@ -407,9 +434,11 @@ export const register: Register = on => {
     // Claude closed in the middle of a demo: the person's data is in the backup until it is restored.
     if ((await getDemoMode($)) === 'off' && (await backupFound($))) $.ui.toast('Your Coanda data is saved from a demo. Run /coanda-demo to restore it.')
     await loadShutdown($)
+    await loadWins($)
     await refreshFocus($)
     $.clock.every(60000, () => void refreshFocus($))
     await $.command.register({ name: 'coanda-setup', description: "Open Coanda's Setup at step 1: your goals file and your Lanes" })
+    await $.command.register({ name: 'coanda-today', description: "Show today's wins in the band, with Save to journal" })
     await $.command.register({ name: 'coanda-specimen', description: 'Show or hide every drawing option of the band (for design checks)' })
     await $.command.register({ name: 'coanda-demo', description: 'Walk through every screen of the band with example data, to correct each one live' })
     await $.command.register({ name: 'coanda-shutdown', description: "Show the shutdown question now, whatever the hour (for checking it)" })
@@ -453,11 +482,21 @@ export const register: Register = on => {
 
     if (e.tool === 'mcp__ccd_turn__update_plan') {
       const input = e as unknown as PlanInput
+      const before = await getSteps($)
       const after = await updateSteps($, all => applyPlan(all, input, now))
+      // A step that just went to completed is a win (a tool fact).
+      await noteWins($, now, newlyCompleted(before, after).map(text => ({ text, kind: 'step' as const })))
       if (Array.isArray(input.items) && after.every(s => s.status !== 'completed')) isFreshPlan = true
     } else if (!e.tool.startsWith(OWN_TOOLS)) {
       const file = (e as { file_path?: unknown }).file_path
       await updateSteps($, all => noteCall(all, typeof file === 'string' ? file : undefined))
+    }
+
+    // A git commit that did not fail is a win.
+    if (e.tool === 'Bash') {
+      const result = ran as { deny?: string; isError?: boolean }
+      const text = commitText(String((e as { command?: unknown }).command ?? ''))
+      if (text !== null && result.deny === undefined && result.isError !== true) await noteWins($, now, [{ text, kind: 'commit' }])
     }
 
     return ran
@@ -578,6 +617,17 @@ export const register: Register = on => {
     $.ui.invalidate('ui.render')
 
     return { text: 'The shutdown question is open above the prompt (it shows when no turn is running).' }
+  })
+
+  // /coanda-today: the day record now, before 17:30 too; the band shows it until Save or Not today.
+  on('command.run', { command: 'coanda-today' }, async $ => {
+    const now = await $.clock.now()
+    if (winsOf(await getWins($), now).items.length === 0) return { text: 'No wins recorded yet today. A finished task-list step or a commit counts.' }
+
+    await openWins($, now)
+    $.ui.invalidate('ui.render')
+
+    return { text: "Today's wins are in the band, above the prompt." }
   })
 
   // /coanda-specimen: a design check, on or off. While on, the band draws the specimen only.

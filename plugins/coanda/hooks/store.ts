@@ -1,9 +1,10 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { Card, DecisionStatus, Setup, ShutdownDoc, TypedPrimary } from '../types'
+import type { Card, DayWins, DecisionStatus, Setup, ShutdownDoc, TypedPrimary, Win } from '../types'
 import { close, supersede, toBottom } from './cards'
 import { focusSourceOf, toSetup } from './focus'
-import { getCards, updateCards, updateSetupSeen, updateShutdown, updateTypedPrimary } from './state'
+import { getCards, updateCards, updateSetupSeen, updateShutdown, updateTypedPrimary, updateWins } from './state'
+import { addWins, winsOf } from './wins'
 
 // What the person keeps across sessions lives in $.store: the setup and the decision cards.
 // Each document carries `v: 1`. The store starts empty: nothing from an older plugin is read.
@@ -126,8 +127,44 @@ export async function loadShutdown($: Keeper): Promise<ShutdownDoc | null> {
   return found
 }
 
+// The day record: one document `{ v: 1, day, items, answered, open }`. A document of another day
+// reads as today's empty one. Wins from several sessions add up: each change reads the store again.
+const isWins = (one: unknown): one is DayWins => {
+  const doc = one as DayWins | null
+  return doc?.v === 1 && typeof doc.day === 'string' && Array.isArray(doc.items) && typeof doc.answered === 'boolean'
+}
+
+async function changeWins($: Keeper, now: number, change: (today: DayWins) => DayWins) {
+  const raw = await $.store.get('wins')
+  const next = change(winsOf(isWins(raw) ? raw : null, now))
+  await $.store.set('wins', next)
+  await updateWins($, () => next)
+}
+
+export async function loadWins($: Keeper): Promise<DayWins | null> {
+  const raw = await $.store.get('wins')
+  const found = isWins(raw) ? raw : null
+  await updateWins($, () => found)
+
+  return found
+}
+
 export async function setShutdown($: Keeper, text: string, day: string, setAt: number) {
   const doc: ShutdownDoc = { v: 1, day, text, setAt }
   await $.store.set('shutdown', doc)
   await updateShutdown($, () => doc)
+}
+
+export async function noteWins($: Keeper, now: number, found: Omit<Win, 'at'>[]) {
+  if (found.length === 0) return
+  await changeWins($, now, today => addWins(today, now, found))
+}
+
+export async function answerWins($: Keeper, now: number) {
+  await changeWins($, now, today => ({ ...today, answered: true, open: false }))
+}
+
+// /coanda-today: asked for before the usual hour (or again after an answer).
+export async function openWins($: Keeper, now: number) {
+  await changeWins($, now, today => ({ ...today, answered: false, open: true }))
 }

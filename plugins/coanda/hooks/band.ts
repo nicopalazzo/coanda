@@ -7,6 +7,7 @@ import type { GoalsAsk } from './goals-ask'
 import { nudgeShows, nudgeText } from './standup'
 import { currentStep, lastOutcomeStep } from './plan'
 import { SHUTDOWN_FALLBACK, carriedStep, shutdownDue } from './shutdown'
+import { chipsOf, headline, isDue, winsOf } from './wins'
 
 // The one function that decides what the band shows. Rebuilt 13 Nov 2026 from the v3 display rules
 // (docs/handover-coanda.md): weight follows the job, exceptions only, typing is the person's own
@@ -23,8 +24,13 @@ export function bandModel(s: Snapshot): BandModel {
   const stage = idleStage(isBusy, quietMs)
   const primary = primaryRow(s)
 
-  if (stage === 'hidden') return { kind: 'hidden' }
-  if (stage === 'primary') return { kind: 'rows', moment: 'quiet', rows: [], primary }
+  // The day record: offered from 17:30 or when asked for; only while the band rests. Asked for, it
+  // shows past the idle stages too.
+  const record = !isBusy && !s.isWorking && isDue(s.wins, s.now)
+  const wanted = record && winsOf(s.wins, s.now).open
+
+  if (stage === 'hidden' && !wanted) return { kind: 'hidden' }
+  if (stage === 'primary' && !wanted) return { kind: 'rows', moment: 'quiet', rows: [], primary }
 
   if (s.sent !== null) {
     const row: BandRow = { part: 'sent', label: 'Sent', text: [`✓ ${s.sent}${s.isWorking ? ' · Claude is working' : ''}`], buttons: [] }
@@ -53,6 +59,8 @@ export function bandModel(s: Snapshot): BandModel {
     return { kind: 'rows', moment: 'guessed', heading: 'Question', rows: [row], primary }
   }
 
+  if (record) return { kind: 'rows', moment: 'today', heading: 'Today', rows: [todayRow(s)], primary }
+
   // Past the shutdown hour, once a day, a quiet turn shows the shutdown question in place of NOW.
   if (!s.isWorking && shutdownDue(s.now, s.shutdown.doc, s.shutdown.forced)) return { kind: 'rows', moment: 'shutdown', heading: 'Shutdown', rows: [shutdownRow(s)], primary }
 
@@ -72,6 +80,22 @@ function withNudge(row: BandRow, s: Snapshot): BandRow {
   if (!nudgeShows(s.standup, s.now, s.isWorking)) return row
 
   return { ...row, note: nudgeText(s.standup), buttons: [...row.buttons, { key: 'standup-dismiss', label: 'Not now', variant: 'link', action: { kind: 'standupDismiss' } }] }
+}
+
+// The day record: how many things moved, the wins as chips, one primary button, one quiet exit.
+function todayRow(s: Snapshot): BandRow {
+  const items = winsOf(s.wins, s.now).items
+
+  return {
+    part: 'today',
+    label: 'Today',
+    text: [headline(items.length)],
+    chips: chipsOf(items),
+    buttons: [
+      { key: 'today-save', label: 'Save to journal', variant: 'primary', action: { kind: 'todaySave' } },
+      { key: 'today-skip', label: 'Not today', variant: 'link', action: { kind: 'todaySkip' } },
+    ],
+  }
 }
 
 // Open cards of this session: the count shows in the label only above 1 (v3 rule 2).

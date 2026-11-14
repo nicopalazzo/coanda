@@ -62,7 +62,7 @@ export const minutes = (from?: number, to?: number): string =>
   from === undefined ? '' : `${Math.max(0, Math.round(((to ?? from) - from) / 60000))} min`
 
 // Bookkeeping steps (saving notes, running checks) say nothing about what got done.
-const BOOKKEEPING = /\b(save|saved|saving|status\.md|index\.md|validate|type-?check|tests?)\b/i
+export const BOOKKEEPING = /\b(save|saved|saving|status\.md|index\.md|validate|type-?check|tests?)\b/i
 
 export const lastOutcomeStep = (steps: Step[]): string =>
   [...steps].reverse().find(s => s.status === 'completed' && !BOOKKEEPING.test(s.content))?.content ?? ''

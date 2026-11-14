@@ -106,6 +106,11 @@ export type Standup = { streak: number; lastEndAt: number }
 export type Day = { v: 1; days: Record<string, DayEntry[]> } // key: dayKey(ms)
 export type Drafts = { v: 1; days: Record<string, { written: number; skipped: number }> }
 
+// The day record: wins of one day. `kind` says how it was heard; `answered` once Save or Not today was pressed;
+// `open` when the person asked for it (/coanda-today) before the usual hour.
+export type Win = { text: string; kind: 'step' | 'commit'; at: number }
+export type DayWins = { v: 1; day: string; items: Win[]; answered: boolean; open: boolean }
+
 // The one decision: register.tsx builds a Snapshot, bandModel(snapshot) answers a BandModel.
 export type Snapshot = {
   now: number
@@ -138,6 +143,8 @@ export type Snapshot = {
   workingSince: number | null
   standup: Standup
   shutdown: ShutdownState
+  // The day record of today (null when none): see wins.ts.
+  wins?: DayWins | null
 }
 
 // A press is data; dispatch() in register.tsx is the only place one is carried out.
@@ -162,11 +169,13 @@ export type BandAction =
   | { kind: 'shutdownType'; value: string; submit?: true } // the SHUTDOWN field; `submit` is Enter
   | { kind: 'shutdownSave' } // "Save": tomorrow's first step
   | { kind: 'shutdownSkip' } // the quiet exit: nothing asked again today
+  | { kind: 'todaySave' } // "Save to journal": the day's wins are written to the journal
+  | { kind: 'todaySkip' } // "Not today": the day record is hidden until tomorrow
 // 'link' is the one quiet exit, drawn as a text link (v3 rule 4). `detail` is the second line under
 // an answer: what follows from it (an option's consequence).
 export type BandButton = { key: string; label: string; variant?: 'primary' | 'secondary' | 'plain' | 'link'; detail?: string; action: BandAction }
 // Which v3 moment a 'rows' model is, so tests and render can tell without reading the rows.
-export type BandMoment = 'sent' | 'pick' | 'guessed' | 'working' | 'resting' | 'quiet' | 'shutdown'
+export type BandMoment = 'sent' | 'pick' | 'guessed' | 'working' | 'resting' | 'quiet' | 'shutdown' | 'today'
 export type BandModel =
   | { kind: 'hidden' }
   // Setup is one step with a heading (D4): what it finds in the goals file, drawn on the placed grid.
@@ -177,7 +186,7 @@ export type BandModel =
   | { kind: 'rows'; moment: BandMoment; rows: BandRow[]; primary?: BandRow; heading?: string }
 // `source` is set only when the row is not a tool fact; `chip` only when hard to undo (v3 rule 2).
 export type BandRow = {
-  part: PartId | 'setup' | 'sent' | 'shutdown'
+  part: PartId | 'setup' | 'sent' | 'shutdown' | 'today'
   label?: string
   text: string[]
   note?: string // one quiet muted line beside the row's quiet link (the stand-up nudge)
@@ -186,6 +195,8 @@ export type BandRow = {
   // Working only: show the breathing circle and its caption beside the line.
   breathe?: true
   fieldNote?: string // a short muted line under a field (the shutdown question's refusal)
+  // Small Dusk-tint tags (the day record's wins); drawn after the first line.
+  chips?: string[]
   inputs?: BandInput[]
   buttons: BandButton[]
 }
@@ -235,6 +246,7 @@ declare module 'claude-code' {
       light: boolean
       lightLit: boolean
       standup: Standup
+      wins: DayWins | null
     }
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "coanda",
-  "version": "0.1.57",
+  "version": "0.1.58",
   "description": "A calm band above the prompt: the goal, what the agent is doing now, one question at a time",
   "types": "./types/index.d.ts"
 }

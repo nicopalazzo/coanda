@@ -15,6 +15,8 @@ import { blankOf } from './question'
 import { SHUTDOWN_FALLBACK, carriedStep, checkShutdown, nextDay, shutdownDue } from './shutdown'
 import { clockTime, dayKey } from './time'
 import { BREAK_MS, FAST_CHECK, LONG_MS, NO_STANDUP, RUNS, noteRun, nudgeShows } from './standup'
+import { addWins, chipsOf, commitText, headline, isDue, journalBlock, mergeJournal, newlyCompleted, winsOf } from './wins'
+import { journalPath } from './io'
 
 // Adapted 13 Nov 2026 from the first repository's tests. Part 1: the tests that take no host (kept
 // as they were), then new pure tests for the v3 band, the decision cards and the question picked.
@@ -914,7 +916,7 @@ test('Setup: with no home directory nothing is read and it says nothing was foun
 test('/coanda-setup opens Setup again with the goals file read afresh; "Looks right" closes it', async ($, on) => {
   const { ui, commands, saved } = await bandOver($, on, { setup: SETUP_FILE('/data/goals.md'), files: { '/data/goals.md': GOALS_TEXT }, env: { HOME: '/home/n' } })
 
-  expect(commands).toEqual(['coanda-setup', 'coanda-specimen', 'coanda-demo', 'coanda-shutdown', 'coanda-grid'])
+  expect(commands).toEqual(['coanda-setup', 'coanda-today', 'coanda-specimen', 'coanda-demo', 'coanda-shutdown', 'coanda-grid'])
   expect(await primaryOf(ui)).toBe('◎ Ship the v0.1 install')
   await $.command.run({ command: 'coanda-setup' } as never)
   expect(await texts(ui)).toContain('SET UP YOUR GOALS')
@@ -1803,4 +1805,157 @@ test('shutdown: Skip writes nothing down and the question stays away for the day
   await ui.press({ key: 'shutdown-skip' })
   expect(await texts(ui)).not.toContain('SHUTDOWN')
   await ui.unmount()
+})
+
+// ---- Day record: the day's wins, offered at 17:30 or on demand, saved to the journal ------------
+
+const WINS_EVENING = new Date(2026, 10, 12, 17, 45).getTime() // Thu 12 Nov 2026, 17:45 local
+const wins3 = (now: number) => addWins(null, now, [{ text: 'Lamp flash fixed', kind: 'step' }, { text: 'fix(band): cover during the swap', kind: 'commit' }, { text: 'Tests pass on 64', kind: 'step' }])
+
+test('day record: a finished step is a win, bookkeeping and repeats are not; a git commit gives its message', () => {
+  const before = [stepOf('Build the row', 'in_progress'), stepOf('Run tests', 'pending'), stepOf('Ship', 'pending')]
+  const after = [stepOf('Build the row', 'completed'), stepOf('Run tests', 'completed'), stepOf('Ship', 'pending')]
+  expect(newlyCompleted(before, after)).toEqual(['Build the row'])
+  expect(newlyCompleted(after, after)).toEqual([])
+
+  expect(commitText('git commit -m "fix(band): cover the swap"')).toBe('fix(band): cover the swap')
+  expect(commitText("git add . && git commit -m 'feat: day record' --no-verify")).toBe('feat: day record')
+  expect(commitText('git commit -m "$(cat <<\'EOF\'\nfeat: from heredoc\n\nbody\nEOF\n)"')).toBe('feat: from heredoc')
+  expect(commitText('git commit')).toBe('Commit')
+  expect(commitText('git commit --dry-run -m "x"')).toBeNull()
+  expect(commitText('git status')).toBeNull()
+  expect(commitText('echo git committed')).toBeNull()
+})
+
+test('day record: the list keeps one win per words, 12 at most, and starts empty on a new day', () => {
+  const one = addWins(null, THEN, [{ text: 'A', kind: 'step' }, { text: 'A', kind: 'step' }, { text: '  ', kind: 'step' }])
+  expect(one.items).toHaveLength(1)
+  expect(addWins(one, THEN + 1, [{ text: 'A', kind: 'commit' }]).items).toHaveLength(1)
+  const many = addWins(null, THEN, Array.from({ length: 15 }, (_, i) => ({ text: `w${i}`, kind: 'step' as const })))
+  expect(many.items.map(w => w.text)).toEqual(Array.from({ length: 12 }, (_, i) => `w${i + 3}`))
+  expect(winsOf(one, THEN + 24 * 3600 * 1000).items).toEqual([])
+  expect(headline(1)).toBe('1 thing moved today')
+  expect(headline(3)).toBe('3 things moved today')
+  expect(chipsOf(many.items)).toHaveLength(6)
+  expect(chipsOf(many.items).at(-1)).toBe('+7 more')
+})
+
+test('day record: due from 17:30 with wins, or when asked; never empty or once answered', () => {
+  expect(isDue(wins3(THEN), THEN)).toBe(false)
+  expect(isDue(wins3(WINS_EVENING), WINS_EVENING)).toBe(true)
+  expect(isDue(null, WINS_EVENING)).toBe(false)
+  expect(isDue({ ...wins3(WINS_EVENING), answered: true }, WINS_EVENING)).toBe(false)
+  expect(isDue({ ...wins3(THEN), open: true }, THEN)).toBe(true)
+  expect(isDue(wins3(WINS_EVENING), new Date(2026, 10, 12, 17, 29).getTime())).toBe(false)
+})
+
+test('day record: the journal block is dated; a day replaces its own block; the newest day is first', () => {
+  const doc = wins3(WINS_EVENING)
+  expect(journalBlock(doc)).toBe('## Thu 12 Nov\n- Date: 2026-11-12\n- 3 things moved today\n- Lamp flash fixed\n- Commit: fix(band): cover during the swap\n- Tests pass on 64\n')
+
+  const first = mergeJournal('', doc)
+  expect(first.startsWith('# Wins 2026-11\n\n## Thu 12 Nov')).toBe(true)
+  const next = addWins(null, WINS_EVENING + 24 * 3600 * 1000, [{ text: 'Next day', kind: 'step' }])
+  const two = mergeJournal(first, next)
+  expect(two.indexOf('## Fri 13 Nov')).toBeLessThan(two.indexOf('## Thu 12 Nov'))
+  // Saving the same day again replaces its block and keeps the other.
+  const again = mergeJournal(two, addWins(doc, WINS_EVENING, [{ text: 'One more', kind: 'step' }]))
+  expect(again.match(/## Thu 12 Nov/g)).toHaveLength(1)
+  expect(again).toContain('One more')
+  expect(again).toContain('Next day')
+  expect(journalPath('/data/Org/FOCUS.md', 'wins-2026-11.md')).toBe('/data/Org/journal/wins-2026-11.md')
+})
+
+test('day record: the TODAY row at 17:30, one primary and one quiet exit; not while working, asking or empty', () => {
+  const day = { wins: wins3(WINS_EVENING), now: WINS_EVENING }
+  const model = bandModel(snap(day))
+  expect(model).toMatchObject({ kind: 'rows', moment: 'today' })
+  const row = only(model)
+  expect(row.label).toBe('Today')
+  expect(row.text).toEqual(['3 things moved today'])
+  expect(row.chips).toEqual(['Lamp flash fixed', 'fix(band): cover during the swap', 'Tests pass on 64'])
+  expect(labels(row)).toEqual(['Save to journal', '~Not today'])
+  expect(row.buttons[0]!.variant).toBe('primary')
+  expect(overBudget(model)).toEqual([])
+
+  expect(bandModel(snap({ ...day, isWorking: true }))).toMatchObject({ moment: 'working' })
+  expect(bandModel(snap({ ...day, cards: [cardOf('c1')] }))).toMatchObject({ moment: 'pick' })
+  expect(bandModel(snap({ wins: wins3(THEN), now: THEN }))).toMatchObject({ moment: 'resting' })
+  expect(bandModel(snap({ wins: null, now: WINS_EVENING }))).toMatchObject({ moment: 'resting' })
+  // Quiet for 12 minutes hides the band; asked for with /coanda-today, the record still shows.
+  expect(bandModel(snap({ ...day, lastActivity: WINS_EVENING - 12 * 60_000 }))).toEqual({ kind: 'hidden' })
+  expect(bandModel(snap({ wins: { ...wins3(THEN), open: true }, now: THEN, lastActivity: THEN - 12 * 60_000 }))).toMatchObject({ moment: 'today' })
+})
+
+test('day record on a host: steps and commits are heard; /coanda-today and Save to journal write the dated block; Not today hides it', async ($, on) => {
+  const goals = '/data/Org/FOCUS.md'
+  const journal = '/data/Org/journal/wins-2026-11.md'
+  const { ui, writes, saved, toasts } = await bandOver($, on, { setup: SETUP_FILE(goals), files: { [goals]: 'Ship the band\n', [journal]: '# Wins 2026-11\n\n## Wed 11 Nov\n- Date: 2026-11-11\n- 1 thing moved today\n- Older\n' }, env: { HOME: '/home/n' }, now: THEN })
+
+  expect((await $.command.run({ command: 'coanda-today' } as never)) as unknown).toMatchObject({ text: expect.stringContaining('No wins') })
+
+  await $.tool.call({ tool: 'mcp__ccd_turn__update_plan', items: [{ content: 'Scan', status: 'in_progress' }, { content: 'Build', status: 'pending' }], scope: 'x' } as never)
+  await $.tool.call({ tool: 'mcp__ccd_turn__update_plan', advance: true } as never)
+  await $.tool.call({ tool: 'mcp__ccd_turn__update_plan', advance: true } as never)
+  await $.tool.call({ tool: 'Bash', command: 'git commit -m "feat: day record"' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'git status' } as never)
+  expect((saved.wins as { items: { text: string }[] }).items.map(w => w.text)).toEqual(['Scan', 'Build', 'feat: day record'])
+  // Noon: not offered yet.
+  expect(await ui.find({ type: 'Text', text: /things moved today/ })).toBeUndefined()
+
+  await $.command.run({ command: 'coanda-today' } as never)
+  expect((await ui.find({ type: 'Text', text: /things moved today/ }))?.text).toBe('3 things moved today')
+  expect(await ui.find({ type: 'Text', text: 'feat: day record' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^TODAY$/ })).toBeDefined()
+
+  await ui.press({ key: 'today-save' })
+  expect(writes).toHaveLength(1)
+  expect(writes[0]!.path).toBe(journal)
+  expect(writes[0]!.text).toContain('## Thu 12 Nov\n- Date: 2026-11-12\n- 3 things moved today\n- Scan\n- Build\n- Commit: feat: day record')
+  expect(writes[0]!.text).toContain('## Wed 11 Nov')
+  expect(writes[0]!.text.indexOf('Thu 12 Nov')).toBeLessThan(writes[0]!.text.indexOf('Wed 11 Nov'))
+  expect(toasts.at(-1)).toContain('Saved to journal')
+  expect((saved.wins as { answered: boolean }).answered).toBe(true)
+  expect(await ui.find({ type: 'Text', text: /things moved today/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('day record on a host: with only the default goals file (~/.claude/goals.md) the journal sits next to it', async ($, on) => {
+  const { ui, writes } = await bandOver($, on, { setup: { v: 1, doneAt: 1, focus: null }, files: { [GOALS_PATH]: GOALS_TEXT }, env: { HOME: '/home/n' }, now: WINS_EVENING, docs: { wins: wins3(WINS_EVENING) } })
+
+  await ui.press({ key: 'today-save' })
+  expect(writes.map(w => w.path)).toEqual(['/home/n/.claude/journal/wins-2026-11.md'])
+  await ui.unmount()
+})
+
+test('day record on a host: Not today hides the record and writes nothing; with no goals folder Save says so and keeps the wins', async ($, on) => {
+  const { ui, writes, saved, toasts } = await bandOver($, on, { setup: { v: 1, doneAt: 1, focus: null }, files: {}, env: {}, now: WINS_EVENING, docs: { wins: wins3(WINS_EVENING) } })
+
+  expect((await ui.find({ type: 'Text', text: /things moved today/ }))?.text).toBe('3 things moved today')
+  await ui.press({ key: 'today-save' })
+  expect(writes).toEqual([])
+  expect(toasts.at(-1)).toContain('goals file')
+  expect((saved.wins as { answered: boolean }).answered).toBe(false)
+
+  await ui.press({ key: 'today-skip' })
+  expect(writes).toEqual([])
+  expect((saved.wins as { answered: boolean }).answered).toBe(true)
+  expect(await ui.find({ type: 'Text', text: /things moved today/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+// ---- The four features together: who shows when ---------------------------------------------------------
+
+test('together: at 18:30 the day record comes first, then the shutdown question, then the usual band; a question or a run wins over both', () => {
+  const evening = new Date(2026, 10, 14, 18, 30).getTime()
+  const day = { wins: wins3(evening), now: evening }
+
+  // Both are due: the day's record, then (once answered) tomorrow's first step.
+  expect(rowsOf(bandModel(snap(day))).moment).toBe('today')
+  expect(rowsOf(bandModel(snap({ ...day, wins: { ...wins3(evening), answered: true } }))).moment).toBe('shutdown')
+  expect(rowsOf(bandModel(snap({ ...day, wins: { ...wins3(evening), answered: true }, shutdown: { doc: { v: 1, day: '2026-11-14', text: '', setAt: 1 }, draft: '', note: '', forced: false } }))).moment).toBe('resting')
+
+  // A run in progress shows neither, and a card to answer comes before both.
+  expect(rowsOf(bandModel(snap({ ...day, isWorking: true }))).moment).toBe('working')
+  expect(rowsOf(bandModel(snap({ ...day, cards: [cardOf('c1')] }))).moment).toBe('pick')
 })

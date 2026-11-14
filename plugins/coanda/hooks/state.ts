@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { StateDollar } from 'claude-code'
 
-import type { Asked, Card, FocusResult, GoalsProposal, Moment, Pending, Setup, SetupDraft, ShutdownDoc, Standup, Step, Suggestion, TypedPrimary } from '../types'
+import type { Asked, Card, DayWins, FocusResult, GoalsProposal, Moment, Pending, Setup, SetupDraft, ShutdownDoc, Standup, Step, Suggestion, TypedPrimary } from '../types'
 
 // Every atom of the mod lives here: this session's values, kept in $.state.
 //
@@ -68,6 +68,8 @@ const labLit = atom({ plugin: 'coanda', key: 'labLit' } as const, false)
 const workStart = atom({ plugin: 'coanda', key: 'workStart' } as const, null as number | null)
 // Long runs in a row (hooks/standup.ts): written at each turn end and by "Not now".
 const standup = atom({ plugin: 'coanda', key: 'standup' } as const, { streak: 0, lastEndAt: 0 } as Standup)
+// The day record as store.ts last read or wrote it; null when none.
+const wins = atom({ plugin: 'coanda', key: 'wins' } as const, null as DayWins | null)
 const typedPrimary = atom({ plugin: 'coanda', key: 'typedPrimary' } as const, null as TypedPrimary | null)
 
 // The shutdown answer as store.ts last read or wrote it; its draft; and /coanda-shutdown's "show it now".
@@ -385,4 +387,12 @@ export async function getShutdownForced($: StateDollar): Promise<boolean> {
 
 export async function updateShutdownForced($: StateDollar, change: (now: boolean) => boolean): Promise<boolean> {
   return update($, shutdownForced, change)
+}
+
+export async function getWins($: StateDollar): Promise<DayWins | null> {
+  return read($, wins)
+}
+
+export async function updateWins($: StateDollar, change: (now: DayWins | null) => DayWins | null): Promise<DayWins | null> {
+  return update($, wins, change)
 }
