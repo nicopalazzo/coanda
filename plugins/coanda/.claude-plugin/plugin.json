@@ -1,6 +1,7 @@
 {
   "name": "coanda",
   "version": "0.1.59",
+  "author": { "name": "Nicolas Palazzo" },
   "description": "A calm band above the prompt: the goal, what the agent is doing now, one question at a time",
   "types": "./types/index.d.ts"
 }
