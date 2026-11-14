@@ -1,27 +1,69 @@
 # Coanda
 
-A decision aid inside Claude Code: a calm band above the prompt that shows the session's goal, what the agent is doing now, and one question at a time with answers as buttons. It is meant to catch consequential wrong turns while protecting the goal the person chose.
+Coanda adds one calm band above the prompt in the Claude desktop app (the Code tab). It shows three things, and nothing else:
 
-Working name, 13 Nov 2026, from the Coandă effect (a flow stays attached to a curved surface and follows it). Name checks (domain, trademark) are not done yet.
+- **Your goal**: the one thing that counts today, and the longer outcomes (called Lanes) it serves.
+- **What Claude is doing now**: one short line, so you can tell whether it is still on your goal.
+- **One question at a time**: when Claude needs a decision from you, it shows up as a question with answers as buttons. You answer it, and the next one waits.
 
-## Where things are
+Coanda is a *mod*: a small add-on that changes how Claude's own window looks. It does not send your data anywhere. It reads one file on your computer (your goals file) and keeps its small settings in Claude's own plugin folder.
 
-- `plugins/coanda/`: the Claude Code desktop mod (plugin id `coanda`, version 0.1.0).
-- `docs/handover-coanda.md`: why the project restarted from `mod-area` (plugin `intent`), the v3 display rules, the research and the staged plan.
-- `docs/design/prototypes/`: the three clickable Band prototypes (v1, v2, v3).
-- `STATUS.md`: where the work stopped and the next action.
+> **Status: private test, version 0.1.54.** The repository is private, so you need access first. Ask Nicolas to add your GitHub account as a collaborator, and make sure you are signed in to GitHub on your computer (`gh auth login`, or your usual Git sign-in). License: all rights reserved (see [LICENSE](LICENSE)); shared privately for testing.
 
-## Checks
+## Install (3 steps)
 
-Run from `plugins/coanda/`:
+You need the Claude desktop app (a recent version) and the `claude` command in your terminal. Open a terminal and run:
 
 ```bash
-npx -p typescript@5.9 tsc -p tsconfig.json
-node hooks/imports.check.mjs
-claude plugin validate .
-claude plugin test .
+claude plugin marketplace add nicopalazzo/coanda
+claude plugin install coanda@coanda
 ```
 
-TypeScript 5.9 is needed (5.6 fails on the host's large tool union). The host types in `.claude-plugin/types/` are not committed.
+Then **quit and reopen the Claude desktop app** (restart is required for a mod to load). Open the Code tab and start a session: Coanda's Setup appears above the prompt.
 
-Not installed, not published: there is no GitHub repository yet.
+You can also add the marketplace from the app: the plugin settings, then "Add marketplace", and paste `nicopalazzo/coanda` (a GitHub address).
+
+## First run: Setup
+
+Setup runs once, the first time you open Coanda. It starts with a short light animation (press "Pull the cord"), then looks for your goals.
+
+Your goals live in a plain text file: `~/.claude/goals.md` (`~` means your home folder). Coanda only **reads** that file. You never have to write it yourself:
+
+- **If the file already exists**, Setup shows your Goal and Lanes. Press **Looks right** to keep them, or **Change** to talk it over with Claude.
+- **If there is no file**, Setup shows two buttons:
+  - **Set up with Claude**: Claude asks you a few questions in the chat and writes the file for you.
+  - **Find them for me**: Claude looks through your files for things that look like goals, shows what it found as a proposal, and writes nothing until you press **Save these**.
+- **Skip for now** leaves it for later.
+
+To open Setup again at any time, type `/coanda-setup` in the prompt. To see every screen of the band with sample data (your own goals are put aside and restored when you leave), type `/coanda-demo`.
+
+## Uninstall
+
+```bash
+claude plugin uninstall coanda@coanda
+claude plugin marketplace remove coanda
+```
+
+Restart the Claude desktop app. Your goals file (`~/.claude/goals.md`) is left alone. Coanda's own small settings are in `~/.claude/plugins/data/coanda/`; delete that folder if you want no trace.
+
+## Report a problem
+
+Open an issue on this repository (github.com/nicopalazzo/coanda/issues), or message Nicolas. Please include:
+
+1. The Coanda version (the `version` line in `plugins/coanda/.claude-plugin/plugin.json`, or `claude plugin list`).
+2. What you did, what you expected, and what you saw. A screenshot of the band helps a lot.
+
+## For people working on Coanda
+
+- `plugins/coanda/`: the mod itself.
+- `docs/`: design notes and the history of the project. `STATUS.md`: where work stopped.
+- Checks, run from the repository root:
+
+```bash
+claude plugin validate plugins/coanda
+claude plugin test plugins/coanda
+npx -p typescript@5.9 tsc -p plugins/coanda/tsconfig.json --noEmit
+node plugins/coanda/hooks/imports.check.mjs
+```
+
+The type check needs the host's generated types in `plugins/coanda/.claude-plugin/types/`. Claude writes that folder when it loads the plugin from a folder; it is not committed.
