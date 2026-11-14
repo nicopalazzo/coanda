@@ -112,6 +112,28 @@ export type Win = { text: string; kind: 'step' | 'commit'; at: number }
 export type DayWins = { v: 1; day: string; items: Win[]; answered: boolean; open: boolean }
 
 // The one decision: register.tsx builds a Snapshot, bandModel(snapshot) answers a BandModel.
+export type GoalsSaved = 'no' | 'waiting' | 'saved'
+
+export type KpiMode = 'on' | 'off'
+
+export type KpiCounts = {
+  sessions: number
+  turns: number
+  // Messages that start with a redirect word ("no", "stop", "revert"…).
+  corrections: number
+  // Claude turns the person stopped.
+  interrupts: number
+  // git revert / restore / reset / checkout -- calls.
+  rework: number
+  // Questions answered by a band button: how many, and the time from the question to the press.
+  decided: number
+  decideMs: number
+}
+
+// One document in $.store under 'kpi': the current mode and the counts per day and per mode.
+export type KpiDoc = { v: 1; mode: KpiMode; days: Record<string, Partial<Record<KpiMode, KpiCounts>>> }
+
+
 export type Snapshot = {
   now: number
   sessionId: string
@@ -126,6 +148,8 @@ export type Snapshot = {
   goalsAsking: boolean
   // Claude's proposal for the goals file (propose_goals), not saved yet; null when none.
   goalsProposal: GoalsProposal | null
+  // The confirmation after the goals are kept ("✓ Saved", until Done).
+  goalsSaved: GoalsSaved
   sessionPrimary: SessionPrimary
   cards: Card[]
   asked: Asked | null
@@ -165,6 +189,7 @@ export type BandAction =
   // The proposal Setup shows: save it (Claude writes the file), change it (talk it over), or drop it.
   | { kind: 'goalsProposal'; what: 'save' | 'revise' | 'drop' }
   | { kind: 'goalsKeep' } // "Looks right": the goals file found is kept as the goals file, Setup is finished
+  | { kind: 'setupDone' } // "Done" on the confirmation: Setup is finished
   | { kind: 'setupSkip' } // "Skip for now": Setup is finished without keeping anything
   | { kind: 'shutdownType'; value: string; submit?: true } // the SHUTDOWN field; `submit` is Enter
   | { kind: 'shutdownSave' } // "Save": tomorrow's first step
@@ -223,6 +248,9 @@ declare module 'claude-code' {
       setupDraft: SetupDraft
       goalsAsking: boolean
       goalsProposal: GoalsProposal | null
+      goalsSaved: GoalsSaved
+      kpi: KpiDoc
+      kpiView: boolean
       detailsOpen: boolean
       typedPrimary: TypedPrimary | null
       workStart: number | null

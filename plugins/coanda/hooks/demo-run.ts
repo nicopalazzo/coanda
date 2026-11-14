@@ -3,7 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import { claudeConfigDir } from './io'
 import type { Card } from '../types'
 import { addCard, loadSetup, loadTypedPrimary, restore } from './store'
-import { NO_DRAFT, updateAsked, updateCards, updateDemoMode, updateFocus, updateLamp, updateSetupDraft, updateSetupOpen, updateSetupSeen, updateTypedPrimary } from './state'
+import { NO_DRAFT, updateAsked, updateCards, updateDemoMode, updateFocus, updateGoalsSaved, updateLamp, updateSetupDraft, updateSetupOpen, updateSetupSeen, updateTypedPrimary } from './state'
 import { NO_FOCUS } from './focus'
 
 // /coanda-demo runs the real flow from zero without touching what Nicolas keeps. The three things the band
@@ -71,6 +71,7 @@ async function forget($: Demoer) {
   await updateTypedPrimary($, () => null)
   await updateFocus($, () => NO_FOCUS)
   await updateSetupDraft($, () => NO_DRAFT)
+  await updateGoalsSaved($, () => 'no')
 }
 
 // Start: back up, check the backup reads back the same, clear, open Setup with the lamp. Returns false when

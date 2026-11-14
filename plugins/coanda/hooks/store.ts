@@ -3,8 +3,10 @@ import type { EngineInterface } from 'claude-code'
 import type { Card, DayWins, DecisionStatus, Setup, ShutdownDoc, TypedPrimary, Win } from '../types'
 import { close, supersede, toBottom } from './cards'
 import { focusSourceOf, toSetup } from './focus'
-import { getCards, updateCards, updateSetupSeen, updateShutdown, updateTypedPrimary, updateWins } from './state'
+import { getCards, updateCards, updateKpi, updateSetupSeen, updateShutdown, updateTypedPrimary, updateWins } from './state'
 import { addWins, winsOf } from './wins'
+import { addKpi, toKpi } from './kpi'
+import type { KpiCounts, KpiMode } from '../types'
 
 // What the person keeps across sessions lives in $.store: the setup and the decision cards.
 // Each document carries `v: 1`. The store starts empty: nothing from an older plugin is read.
@@ -167,4 +169,25 @@ export async function answerWins($: Keeper, now: number) {
 // /coanda-today: asked for before the usual hour (or again after an answer).
 export async function openWins($: Keeper, now: number) {
   await changeWins($, now, today => ({ ...today, answered: false, open: true }))
+}
+
+// KPI counts for the two-week test: read at session start, then each count reads the stored document, adds and
+// writes it back (two sessions may count at once).
+export async function loadKpi($: Keeper) {
+  const doc = toKpi(await $.store.get('kpi'))
+  await updateKpi($, () => doc)
+
+  return doc
+}
+
+export async function noteKpi($: Keeper, day: string, add: Partial<KpiCounts>) {
+  const doc = addKpi(toKpi(await $.store.get('kpi')), day, add)
+  await $.store.set('kpi', doc)
+  await updateKpi($, () => doc)
+}
+
+export async function setKpiMode($: Keeper, mode: KpiMode) {
+  const doc = { ...toKpi(await $.store.get('kpi')), mode }
+  await $.store.set('kpi', doc)
+  await updateKpi($, () => doc)
 }

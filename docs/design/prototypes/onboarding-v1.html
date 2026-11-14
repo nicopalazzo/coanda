@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Coanda onboarding</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600&family=Fira+Mono:wght@400;500&display=swap">
+<style>
+/* Tokens copied from coanda-brand/wip/prototypes/assets/coanda.css, world B · Dusk */
+:root{
+  --paper:#ffffff; --desk:#f5f5f2; --ink:#0b0b0a; --muted:#5e5c55; --line:#e3e2dc;
+  --night:#0b0b0a; --night-t:#e9e6dc; --night-m:#9a978d; --warm:#ffd98a;
+  --act:#5663a8; --act-t:#ffffff; --act-h:#414c8c; --sec-t:#414c8c; --sec-h:#f0f3fe;
+  --badge:#f0f3fe; --badge-t:#414c8c; --ok:#1f7a4d; --ok-soft:#e8f4ee;
+  --body:"Fira Sans",system-ui,-apple-system,sans-serif; --mono:"Fira Mono",ui-monospace,Menlo,monospace;
+  --ease:cubic-bezier(.16,1,.3,1);
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--desk);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.in{max-width:1080px;margin:0 auto;padding:32px 24px 80px}
+header h1{font-size:28px;font-weight:600;margin:0 0 6px}
+header p{margin:0;color:var(--muted);max-width:72ch}
+.tag{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+section{margin-top:44px}
+section > h2{font-size:20px;font-weight:600;margin:4px 0 6px}
+section > p.lead{margin:0 0 16px;color:var(--muted);max-width:75ch}
+.note{font-size:13.5px;color:var(--muted);border-left:3px solid var(--act);padding:2px 0 2px 10px;margin:12px 0}
+
+/* buttons */
+.btn{font-family:var(--body);font-weight:500;font-size:14.5px;line-height:1.2;border-radius:8px;padding:9px 16px;border:2px solid var(--act);background:var(--act);color:var(--act-t);cursor:pointer}
+.btn:hover{background:var(--act-h)}
+.btn.sec{background:transparent;color:var(--sec-t)}
+.btn.sec:hover{background:var(--sec-h)}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+.btn.ghost:hover{background:var(--desk);color:var(--ink)}
+button:focus-visible{outline:2px solid var(--act);outline-offset:2px}
+.badge{display:inline-block;font-family:var(--mono);font-size:12px;font-weight:500;padding:2px 9px;border-radius:999px;background:var(--badge);color:var(--badge-t);white-space:nowrap}
+
+/* flow stepper */
+.steps{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.steps button{font:500 13px/1 var(--body);border:1px solid var(--line);background:var(--paper);color:var(--muted);border-radius:999px;padding:8px 12px;cursor:pointer}
+.steps button[aria-current="true"]{border-color:var(--act);color:var(--act-h);background:var(--badge)}
+
+/* fake Claude window */
+.win{background:var(--paper);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.titlebar{display:flex;gap:8px;align-items:center;padding:9px 14px;border-bottom:1px solid var(--line);background:var(--desk);font-size:13px;color:var(--muted)}
+.dots{display:flex;gap:6px}.dots i{width:10px;height:10px;border-radius:50%;background:#cfcdc5;display:block}
+.chat{padding:18px 22px;min-height:120px;display:flex;flex-direction:column;gap:10px;font-size:14.5px}
+.msg.user{align-self:flex-end;background:var(--desk);padding:7px 12px;border-radius:10px;max-width:70%}
+.msg .who{display:block;font-size:12px;color:var(--muted)}
+.dim{color:var(--muted)}
+
+/* the band */
+.bandwrap{margin:0 14px;position:relative;border-radius:12px;overflow:hidden}
+.band{border:1.5px solid var(--ink);border-radius:12px;background:var(--paper);padding:12px 16px;min-height:208px}
+.band h3{font-family:var(--mono);font-size:12px;letter-spacing:.09em;text-transform:uppercase;margin:0 0 4px;font-weight:500}
+.band hr{border:0;border-top:1px solid var(--line);margin:0 0 10px}
+.grid{display:grid;grid-template-columns:72px 1fr auto;gap:2px 12px;font-size:14.5px}
+.grid .k{font-family:var(--mono);font-size:12px;color:var(--muted);padding-top:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px}
+.okline{display:flex;gap:10px;align-items:baseline;font-size:15px}
+.okline b{color:var(--ok)}
+.primaryrow{margin:8px 14px 0;font-size:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.primaryrow .p{font-weight:600}
+.prompt{margin:10px 14px 14px;border:1.5px solid var(--line);border-radius:12px;padding:12px 14px;color:var(--muted);font-size:14px}
+.q{font-weight:500;font-size:15px;margin:0}
+.cons{display:block;font-size:12px;font-weight:400;opacity:.85;margin-top:2px}
+.proof{font-size:13px;color:var(--muted);margin-top:10px}
+.proof b{color:var(--ink);font-weight:600}
+
+/* lamp */
+.lamp{position:absolute;inset:0;background:var(--night);color:var(--night-t);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:2;
+  -webkit-mask-image:radial-gradient(circle at 50% 40%, transparent var(--hole,0%), #000 calc(var(--hole,0%) + 1%));
+          mask-image:radial-gradient(circle at 50% 40%, transparent var(--hole,0%), #000 calc(var(--hole,0%) + 1%))}
+.lamp .cord{width:2px;height:58px;background:var(--night-m);transform-origin:top;animation:sway 3.2s ease-in-out infinite;position:absolute;top:0;left:calc(50% + 150px)}
+.lamp .cord::after{content:"";position:absolute;bottom:-8px;left:-5px;width:12px;height:12px;border-radius:50%;background:var(--warm)}
+.lamp p{margin:0;font-size:14px;color:var(--night-m)}
+.lamp .btn{background:var(--paper);color:var(--ink);border-color:var(--paper)}
+.lamp.pulled .cord{animation:pull .5s var(--ease) forwards}
+.lamp.open{animation:open 1.6s var(--ease) forwards}
+@property --hole{syntax:"<percentage>";inherits:false;initial-value:0%}
+@keyframes open{0%{--hole:0%;box-shadow:inset 0 0 0 0 var(--warm)}100%{--hole:120%}}
+@keyframes sway{0%,100%{transform:rotate(3deg)}50%{transform:rotate(-3deg)}}
+@keyframes pull{40%{transform:scaleY(1.35)}100%{transform:scaleY(1)}}
+@media (prefers-reduced-motion:reduce){.lamp .cord{animation:none}.lamp.open{animation-duration:.01s}}
+
+/* fade-in for a new band state */
+.enter{animation:enter .45s var(--ease)}
+@keyframes enter{from{opacity:0;transform:translateY(4px)}}
+
+/* copy options */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.card .line{font-size:15.5px;font-weight:500;margin:6px 0}
+.card p{margin:4px 0;font-size:14px;color:var(--muted)}
+.card.pick{border:2px solid var(--act)}
+
+/* milestones */
+.path{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:8px}
+.path .m{padding:12px 14px 12px 0;border-top:3px solid var(--line);position:relative}
+.path .m.done{border-top-color:var(--act)}
+.path .m.here{border-top-color:var(--act)}
+.path .m.here::before{content:"you are here";position:absolute;top:-24px;left:0;font-family:var(--mono);font-size:11px;color:var(--act-h)}
+.path .m b{display:block;font-size:14.5px}
+.path .m span{font-size:13px;color:var(--muted)}
+
+/* KPI table and chart */
+table{width:100%;border-collapse:collapse;background:var(--paper);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:14px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;background:var(--desk)}
+tr:last-child td{border-bottom:0}
+td.n{font-family:var(--mono);font-size:13px;white-space:nowrap}
+.sample{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:4px;background:#fff3df;color:#7a4a00;letter-spacing:.05em}
+.chart{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px 18px;display:grid;gap:14px}
+.bar{display:grid;grid-template-columns:200px 1fr;gap:12px;align-items:center;font-size:13.5px}
+.bar .pair{display:grid;gap:3px}
+.bar i{display:block;height:14px;border-radius:3px}
+.bar i.off{background:#cfcdc5}
+.bar i.on{background:var(--act)}
+.bar small{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.legend{display:flex;gap:16px;font-size:12.5px;color:var(--muted)}
+.legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.legend .l-off::before{background:#cfcdc5}.legend .l-on::before{background:var(--act)}
+ol.exp{margin:8px 0 0;padding-left:20px;font-size:14.5px}
+ol.exp li{margin:4px 0}
+</style>
+</head>
+<body>
+<div class="in">
+
+<header>
+  <span class="tag">Prototype · not in the plugin · Sat 14 Nov 2026</span>
+  <h1>Coanda onboarding: the first five minutes, and the first week</h1>
+  <p>Four parts. A: the setup flow with the lamp, a success state and a first win. B: benefit lines for the empty state. C: progress shown as moments of value, not a checklist. D: how to measure Coanda against working without it. Goals, Lanes and numbers are made up.</p>
+</header>
+
+<!-- A ------------------------------------------------------------- -->
+<section>
+  <span class="tag">A · Click through it</span>
+  <h2>Lamp → goals → saved → Primary → first win</h2>
+  <p class="lead">The lamp plays once, at Setup. The success state confirms the save and points to the one next step. Onboarding ends at the first win, a question answered in one click, not when the goals are saved.</p>
+
+  <div class="steps" id="steps"></div>
+
+  <div class="win">
+    <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span> Claude Code · coanda</div>
+    <div class="chat" id="chat"></div>
+    <div class="bandwrap" id="bandwrap"><div class="band" id="band"></div></div>
+    <div class="primaryrow" id="primaryrow"></div>
+    <div class="prompt">Reply to Claude…</div>
+  </div>
+  <p class="note" id="why"></p>
+</section>
+
+<!-- B ------------------------------------------------------------- -->
+<section>
+  <span class="tag">B · Point 5</span>
+  <h2>Benefit lines for the empty state</h2>
+  <p class="lead">Today's text says what a Goal and a Lane are. Lead with what the person gets, and keep one line that defines the terms. The highlighted card is my pick.</p>
+  <div class="cards">
+    <div class="card pick">
+      <span class="badge">pick</span>
+      <div class="line">Tell Coanda what counts, and it keeps Claude on it.</div>
+      <p>A Goal is the one thing for today. A Lane is a longer outcome with a date.</p>
+    </div>
+    <div class="card">
+      <span class="badge">calm</span>
+      <div class="line">Fewer wrong turns. Claude checks with you when it matters.</div>
+      <p>Start with your goals: one for today, a few with dates.</p>
+    </div>
+    <div class="card">
+      <span class="badge">decide faster</span>
+      <div class="line">Answer Claude in one click, with your goals in view.</div>
+      <p>Coanda needs your goals to know which choices matter.</p>
+    </div>
+    <div class="card">
+      <span class="badge">short</span>
+      <div class="line">Your goals, always in view. Claude stays on them.</div>
+      <p>A Goal for today, Lanes for the weeks ahead.</p>
+    </div>
+  </div>
+</section>
+
+<!-- C ------------------------------------------------------------- -->
+<section>
+  <span class="tag">C · Point 6, part 1</span>
+  <h2>Progress as value moments, not setup steps</h2>
+  <p class="lead">No 0 % meter and no checklist of settings. The path counts things Coanda did for the person. Each milestone gets one short success line when it first happens, then the path goes away for good after the third.</p>
+  <div class="path">
+    <div class="m done"><b>Goals saved</b><span>Setup, day 1</span></div>
+    <div class="m done"><b>First choice in one click</b><span>A question answered with a button</span></div>
+    <div class="m here"><b>First wrong turn caught</b><span>You stopped Claude before it went off your Primary</span></div>
+    <div class="m"><b>First day closed on its Primary</b><span>Primary done, before shutdown</span></div>
+  </div>
+  <p class="note">After the path: from day 2, one quiet "proof line" at rest, at most once a day, never while Claude works. You can see it in step 6 of part A.</p>
+</section>
+
+<!-- D ------------------------------------------------------------- -->
+<section>
+  <span class="tag">D · Point 6, part 2</span>
+  <h2>With Coanda vs without: what to measure</h2>
+  <p class="lead">Coanda claims two things: it catches wrong turns, and it protects the goal you chose. Each KPI below can be counted on your own machine from session transcripts and the band's hooks, with nothing sent outside.</p>
+
+  <table>
+    <thead><tr><th>KPI</th><th>What it shows</th><th>How to count it</th><th>Better is</th></tr></thead>
+    <tbody>
+      <tr><td><b>Corrections per session</b> · <span class="badge">north star</span></td><td>Wrong turns that got through: you had to redirect Claude</td><td>Your messages that undo or redirect ("no", "stop", "not that", "revert"), plus turns you interrupted</td><td class="n">↓ lower</td></tr>
+      <tr><td><b>Rework</b></td><td>The cost of a wrong turn</td><td>Edits reverted in the same session, and <code>git revert</code> / <code>git checkout --</code> calls</td><td class="n">↓ lower</td></tr>
+      <tr><td><b>Time to decide</b></td><td>How fast you answer Claude's questions</td><td>Seconds from Claude's question to your answer, by button or typed</td><td class="n">↓ lower</td></tr>
+      <tr><td><b>Turns on the Primary</b></td><td>Protecting the goal</td><td>Share of turns whose work matches today's Primary (Claude rates each turn against goals.md, so this is inferred)</td><td class="n">↑ higher</td></tr>
+      <tr><td><b>Primary done rate</b></td><td>Whether the day lands</td><td>Days the Primary is marked done ÷ days one was set</td><td class="n">↑ higher</td></tr>
+      <tr><td><b>Topic switches per day</b></td><td>Drift</td><td>New sessions or prompts on a topic outside the Goal and Lanes</td><td class="n">↓ lower</td></tr>
+      <tr><td><b>Still on at day 7</b></td><td>Whether people keep it (for other users)</td><td>The plugin is still on, and at least one question was answered by button in week 1</td><td class="n">↑ higher</td></tr>
+    </tbody>
+  </table>
+
+  <h2 style="margin-top:28px">The test: two weeks, same person</h2>
+  <ol class="exp">
+    <li><b>Week 1, Coanda off but logging.</b> The hooks count everything above. The band shows nothing. This is the baseline.</li>
+    <li><b>Week 2, Coanda on.</b> Same counts.</li>
+    <li><b>Compare per session, not per week</b>, since the amount of work changes. Keep notes on unusual days (a deadline, a new project).</li>
+    <li><b>For other users later:</b> the same pair of weeks, or half the questions shown in the band and half left in the chat.</li>
+  </ol>
+
+  <div class="chart" style="margin-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <b style="font-size:15px">What the result screen could look like</b>
+      <span class="sample">SAMPLE DATA · INVENTED</span>
+    </div>
+    <div class="legend"><span class="l-off">Week 1 · off</span><span class="l-on">Week 2 · on</span></div>
+    <div class="bar"><span>Corrections / session</span><div class="pair"><i class="off" style="width:70%"></i><i class="on" style="width:38%"></i><small>4.2 → 2.3</small></div></div>
+    <div class="bar"><span>Rework edits / session</span><div class="pair"><i class="off" style="width:50%"></i><i class="on" style="width:30%"></i><small>3.0 → 1.8</small></div></div>
+    <div class="bar"><span>Time to decide (s)</span><div class="pair"><i class="off" style="width:80%"></i><i class="on" style="width:20%"></i><small>48 s → 12 s</small></div></div>
+    <div class="bar"><span>Turns on the Primary</span><div class="pair"><i class="off" style="width:58%"></i><i class="on" style="width:76%"></i><small>58 % → 76 %</small></div></div>
+    <div class="bar"><span>Primary done rate</span><div class="pair"><i class="off" style="width:40%"></i><i class="on" style="width:60%"></i><small>2 of 5 days → 3 of 5</small></div></div>
+  </div>
+  <p class="note">Labels: the KPIs and the test are my proposal. "Turns on the Primary" depends on Claude's judgement, so it is inferred. All numbers in the chart are invented.</p>
+</section>
+
+</div>
+
+<script>
+const G = {goal:"Ship the v0.1 install", lanes:[["Lane 1","portfolio live","14 Dec"],["Lane 2","ship the product page","5 Dec"],["Lane 3","sell the flat","20 Dec"]]};
+let primary = null;
+const STEPS = [
+  {id:"lamp",  label:"1 · Lamp"},
+  {id:"found", label:"2 · Goals found"},
+  {id:"saved", label:"3 · Saved (success)"},
+  {id:"ambient", label:"4 · Primary set"},
+  {id:"question", label:"5 · First question"},
+  {id:"win", label:"6 · First win"},
+];
+const WHY = {
+  lamp:"Plays once, at Setup. The cord sways and asks one thing: what happens if you pull it? That's the suspense, and the reveal is the first proof that this is possible inside Claude.",
+  found:"Sensible default: Claude already found the goals, so the only work is to accept them.",
+  saved:"Success state, all three kinds: confirmation (✓ saved, where), context (what Coanda will do now), encouragement through the next step. The Primary is suggested from the Lanes, so one click is enough.",
+  ambient:"Setup is done. The band says once, in one line, what to expect next, so the first question doesn't come as a surprise.",
+  question:"Simulated: Claude reaches a choice. This is Coanda's real value, so onboarding should lead here.",
+  win:"First win: celebrate a moment that matters to the person (decided in one click), not the sign-up. From day 2 the proof line replaces it."
+};
+const $ = s => document.querySelector(s);
+let cur = "lamp";
+
+function stepper(){
+  $("#steps").innerHTML = STEPS.map(s=>`<button data-go="${s.id}" aria-current="${s.id===cur}">${s.label}</button>`).join("");
+}
+function goalsGrid(stamp){
+  return `<div class="grid"><span class="k">Goal</span><span>${G.goal}</span><span></span>${G.lanes.map(l=>`<span class="k">${l[0]}</span><span>${l[1]} · by ${l[2]}</span><span></span>`).join("")}</div>`;
+}
+function render(){
+  stepper();
+  const band = $("#band"), chat=$("#chat"), pr=$("#primaryrow");
+  $("#bandwrap").querySelector(".lamp")?.remove();
+  chat.innerHTML = `<div class="dim">Claude: Coanda is installed. Setup will open in the band below.</div>`;
+  pr.innerHTML = "";
+  let html="";
+  if(cur==="lamp" || cur==="found"){
+    html = `<h3>Set up your goals</h3><hr>${goalsGrid()}<div class="row"><button class="btn" data-go="saved">Looks right</button><button class="btn sec">Change</button><button class="btn ghost">Skip for now</button></div>`;
+  }
+  if(cur==="saved"){
+    html = `<h3>Set up your goals</h3><hr>
+      <div class="okline enter"><b>✓ Saved</b><span>Goals and 3 Lanes in <span class="badge">~/.claude/goals.md</span></span></div>
+      <p style="margin:8px 0 0;font-size:14.5px">From now on, when Claude reaches a choice that could take it off these, the choice shows up here as buttons.</p>
+      <p style="margin:12px 0 0;font-size:14.5px;font-weight:500">Last step: what's today's Primary?</p>
+      <div class="row" style="margin-top:8px">${G.lanes.map((l,i)=>`<button class="btn ${i?'sec':''}" data-primary="${l[1]}">${l[1]}</button>`).join("")}<button class="btn ghost">Something else…</button></div>`;
+  }
+  if(cur==="ambient"){
+    html = `<div class="enter"><span class="dim" style="font-size:14.5px">Resting. Claude is waiting for you.</span>
+      <p style="margin:10px 0 0;font-size:14.5px">You're set. Ask Claude for anything. If it needs a choice, the choice will show up here.</p>
+      <div class="row"><button class="btn sec" data-go="question">Simulate: Claude reaches a choice</button></div></div>`;
+  }
+  if(cur==="question"){
+    chat.innerHTML += `<div class="msg user"><span class="who">You</span>Add the install steps to the README</div><div>Claude: The README has two install paths. Should I…</div>`;
+    html = `<div class="enter"><h3>Question</h3><hr><p class="q">Document the desktop install only, or the CLI too?</p>
+      <div class="row"><button class="btn" data-go="win">Desktop only<span class="cons">Keeps to the v0.1 install</span></button><button class="btn sec" data-go="win">Both<span class="cons">Adds about 20 lines</span></button><button class="btn ghost">Answer in chat</button></div></div>`;
+  }
+  if(cur==="win"){
+    chat.innerHTML += `<div class="msg user"><span class="who">You</span>Add the install steps to the README</div><div>Claude: Writing the desktop install section…</div>`;
+    html = `<div class="enter"><div class="okline"><b>✓ Decided in one click</b><span>Desktop only, sent to Claude · 3 s</span></div>
+      <p style="margin:8px 0 0;font-size:14.5px">That's Coanda: you decide, Claude stays on <b>${primary||"your Primary"}</b>.</p>
+      <p class="proof" style="margin-top:22px"><span class="tag">From day 2, at rest, at most once a day</span><br>This week: <b>7 choices in one click</b> · <b>2 wrong turns caught</b> · Primary done <b>3 of 4 days</b></p></div>`;
+  }
+  band.innerHTML = html;
+  if(["ambient","question","win"].includes(cur)) pr.innerHTML = `<span class="tag">Primary</span><span class="p">◎ ${primary||"portfolio live"}</span>`;
+  if(cur==="lamp") addLamp();
+  $("#why").textContent = WHY[cur];
+}
+function addLamp(){
+  const l = document.createElement("div");
+  l.className="lamp";
+  l.innerHTML = `<div class="cord"></div><p>Something is waiting here.</p><button class="btn" id="pull">Pull the cord</button>`;
+  $("#bandwrap").appendChild(l);
+  l.querySelector("#pull").onclick = ()=>{
+    l.classList.add("pulled");
+    setTimeout(()=>l.classList.add("open"),350);
+    setTimeout(()=>{cur="found";render();},2000);
+  };
+}
+document.addEventListener("click",e=>{
+  const g=e.target.closest("[data-go]"); if(g){cur=g.dataset.go;render();return;}
+  const p=e.target.closest("[data-primary]"); if(p){primary=p.dataset.primary;cur="ambient";render();}
+});
+render();
+</script>
+</body>
+</html>

@@ -19,6 +19,8 @@ import { noteRun } from './standup'
 import { commitText, headline, journalFile, mergeJournal, newlyCompleted, winsOf } from './wins'
 import { renderBand, renderSpecimen } from './render'
 import { renderGrid } from './grid'
+import { renderKpi } from './kpi-view'
+import { isCorrection, isRework } from './kpi'
 import { renderLab } from './lab'
 import { COVER_MS, LAMP_MIN_ROWS, LAMP_MS, LAMP_ROWS, renderLamp } from './lamp'
 import { renderLight } from './light'
@@ -57,6 +59,11 @@ import {
   getDetailsOpen,
   getGoalsAsking,
   updateGoalsAsking,
+  getGoalsSaved,
+  updateGoalsSaved,
+  getKpi,
+  getKpiView,
+  updateKpiView,
   getGoalsProposal,
   updateGoalsProposal,
   getDoneLast,
@@ -101,7 +108,7 @@ import {
   updateSuggestions,
   NO_DRAFT,
 } from './state'
-import { NO_SETUP, addCard, answerWins, closeCard, deferCard, finishSetup, loadSetup, loadShutdown, loadTypedPrimary, loadWins, noteWins, openWins, readFocusSource, restore, setFocus, setShutdown, setTypedPrimary } from './store'
+import { NO_SETUP, addCard, answerWins, closeCard, deferCard, finishSetup, loadSetup, loadShutdown, loadTypedPrimary, loadWins, noteWins, openWins, readFocusSource, loadKpi, noteKpi, setKpiMode, restore, setFocus, setShutdown, setTypedPrimary } from './store'
 
 // The shell's wiring: one handler per host event, each a short run of named calls; snapshot()
 // gathers what the band reads; dispatch() is the only place a press is carried out.
@@ -197,6 +204,7 @@ async function snapshot($: State & Pick<EngineInterface, 'clock' | 'session' | '
     goalsPath: (await goalsSource($)).path ?? '',
     goalsAsking: await getGoalsAsking($),
     goalsProposal: await getGoalsProposal($),
+    goalsSaved: await getGoalsSaved($),
     sessionPrimary,
     cards: await getCards($),
     asked,
@@ -293,6 +301,7 @@ async function finishSetupMoment($: Presser) {
   await finishSetup($, await $.clock.now())
   await updateGoalsAsking($, () => false)
   await updateGoalsProposal($, () => null)
+  await updateGoalsSaved($, () => 'no')
   await updateLamp($, () => 'off')
   await updateSetupOpen($, () => false)
 }
@@ -325,6 +334,8 @@ async function goalsProposal($: Presser, what: 'save' | 'revise' | 'drop') {
   if (path === null) return
 
   await updateGoalsAsking($, () => true)
+  // Saving: once Claude's file holds the goals, the confirmation shows.
+  await updateGoalsSaved($, () => (what === 'save' ? 'waiting' : 'no'))
   $.ui.invalidate('ui.render')
   submitAndGo($, proposalMessage(what, path, proposal))
 }
@@ -336,7 +347,9 @@ async function goalsKeep($: Presser) {
 
   await setFocus($, { kind: 'file', path })
   await refreshFocus($)
-  await finishSetupMoment($)
+  // The confirmation shows; Done finishes Setup.
+  await updateGoalsSaved($, () => 'saved')
+  $.ui.invalidate('ui.render')
 }
 
 // "Save to journal": today's wins go into the month's file next to the goals file. On a failure the
@@ -368,6 +381,11 @@ async function dispatch($: Presser, action: BandAction): Promise<void> {
       if (!(await claim($, action.option))) return
       await closeCard($, action.card.id, 'answered', await $.clock.now(), action.option)
       if ((await getDemoMode($)) === 'on') return demoSent($)
+      // Time to decide (the KPI test): from the question to the press.
+      {
+        const pressedAt = await $.clock.now()
+        await noteKpi($, dayKey(pressedAt), { decided: 1, decideMs: Math.max(0, pressedAt - action.card.askedAt) })
+      }
       submitAndGo($, answer(action.card, action.option))
       return
     case 'later':
@@ -407,6 +425,7 @@ async function dispatch($: Presser, action: BandAction): Promise<void> {
       return goalsProposal($, action.what)
     case 'goalsKeep':
       return goalsKeep($)
+    case 'setupDone':
     case 'setupSkip':
       return finishSetupMoment($)
     case 'todaySave':
@@ -415,6 +434,9 @@ async function dispatch($: Presser, action: BandAction): Promise<void> {
       return answerWins($, await $.clock.now())
   }
 }
+
+// What Coanda's own tools answer during the baseline week: Claude asks in the chat, as without Coanda.
+const BASELINE_REFUSAL = 'Coanda is in its baseline week (the band is off). Ask the user in the chat instead, as you would without Coanda.'
 
 export const register: Register = on => {
   // A fresh task list (nothing done yet) during this turn means the work is starting.
@@ -428,6 +450,7 @@ export const register: Register = on => {
     await restore($)
     await loadSetup($)
     await updateGoalsAsking($, () => false)
+    await updateGoalsSaved($, () => 'no')
     // Setup is about to show for the first time: it opens with the lamp.
     if (((await getSetupSeen($)) ?? NO_SETUP).doneAt === null) await updateLamp($, () => 'dark')
     await loadTypedPrimary($)
@@ -435,6 +458,8 @@ export const register: Register = on => {
     if ((await getDemoMode($)) === 'off' && (await backupFound($))) $.ui.toast('Your Coanda data is saved from a demo. Run /coanda-demo to restore it.')
     await loadShutdown($)
     await loadWins($)
+    await loadKpi($)
+    await noteKpi($, dayKey(await $.clock.now()), { sessions: 1 })
     await refreshFocus($)
     $.clock.every(60000, () => void refreshFocus($))
     await $.command.register({ name: 'coanda-setup', description: "Open Coanda's Setup at step 1: your goals file and your Lanes" })
@@ -442,6 +467,8 @@ export const register: Register = on => {
     await $.command.register({ name: 'coanda-specimen', description: 'Show or hide every drawing option of the band (for design checks)' })
     await $.command.register({ name: 'coanda-demo', description: 'Walk through every screen of the band with example data, to correct each one live' })
     await $.command.register({ name: 'coanda-shutdown', description: "Show the shutdown question now, whatever the hour (for checking it)" })
+    await $.command.register({ name: 'coanda-baseline', description: 'Turn the band off but keep counting (the baseline week), or back on' })
+    await $.command.register({ name: 'coanda-kpi', description: 'Show or hide the KPIs: band off days next to band on days, per session' })
     await $.command.register({ name: 'coanda-grid', description: 'Show or hide the grid page: rulers in cells, spacing steps, text sizes, contrast (for design checks)' })
 
     // A reload at the end of a turn loses its turn.complete: read the answer kept while it was written.
@@ -452,6 +479,7 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: `${OWN_TOOLS}ask_decision` }, async ($, e) => {
+    if ((await getKpi($)).mode === 'off') return { result: BASELINE_REFUSAL }
     const card = toCard(e, await $.clock.now(), await $.session.id())
 
     if (typeof card === 'string') return { result: card }
@@ -464,6 +492,7 @@ export const register: Register = on => {
 
   // Claude's proposal for the goals: shown in Setup (which opens if it was closed), saved only when the person agrees.
   on('tool.call', { tool: `${OWN_TOOLS}propose_goals` }, async ($, e) => {
+    if ((await getKpi($)).mode === 'off') return { result: BASELINE_REFUSAL }
     const proposal = toProposal(e)
     if (typeof proposal === 'string') return { result: proposal }
 
@@ -492,6 +521,9 @@ export const register: Register = on => {
       await updateSteps($, all => noteCall(all, typeof file === 'string' ? file : undefined))
     }
 
+    // A git command that throws work away counts as rework (the KPI test); only the count is kept.
+    if (e.tool === 'Bash' && isRework(String((e as { command?: unknown }).command ?? ''))) await noteKpi($, dayKey(now), { rework: 1 })
+
     // A git commit that did not fail is a win.
     if (e.tool === 'Bash') {
       const result = ran as { deny?: string; isError?: boolean }
@@ -505,6 +537,8 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     if (!e.turnId) {
       isFreshPlan = false
+      // A message that starts with a redirect word counts as a correction (the KPI test); the words are not kept.
+      if (isCorrection(e.text)) await noteKpi($, dayKey(await $.clock.now()), { corrections: 1 })
       void updateLastPrompt($, () => e.text)
       // A new run: the band breathes once it has lasted BREATHE_AFTER_MS. One redraw is asked for at that
       // moment; the render rechecks the clock and isWorking, so a timer left over from a finished run draws nothing.
@@ -553,12 +587,17 @@ export const register: Register = on => {
       // One finished run for the stand-up nudge; the end time is the clock now.
       const endAt = await $.clock.now()
       await updateStandup($, log => noteRun(log, endAt, e.durationMs, e.isAborted))
+      await noteKpi($, dayKey(endAt), { turns: 1, interrupts: e.isAborted ? 1 : 0 })
       $.ui.invalidate('ui.render')
     }
     // Claude's turn ended after Setup asked it: read the goals file; "Asking Claude" goes once it holds goals or is unreadable.
     if (e.agentId === undefined && (await getGoalsAsking($))) {
       await refreshFocus($)
-      if (goalsState(await getFocus($)) !== 'nothing') await updateGoalsAsking($, () => false)
+      if (goalsState(await getFocus($)) !== 'nothing') {
+        await updateGoalsAsking($, () => false)
+        // After Save these: Claude wrote the file, so the confirmation shows.
+        if (goalsState(await getFocus($)) === 'found') await updateGoalsSaved($, now => (now === 'waiting' ? 'saved' : now))
+      }
       $.ui.invalidate('ui.render')
     }
 
@@ -578,6 +617,7 @@ export const register: Register = on => {
     await updateSetupDraft($, () => NO_DRAFT)
     await updateSetupOpen($, () => true)
     await updateGoalsAsking($, () => false)
+    await updateGoalsSaved($, () => 'no')
     await updateLamp($, () => 'dark')
     await refreshFocus($)
     $.ui.invalidate('ui.render')
@@ -674,6 +714,29 @@ export const register: Register = on => {
     $.ui.invalidate('ui.render')
 
     return { text: isOn ? 'Lab on: the band shows the capability tests. Run /coanda-lab again to hide it.' : 'Lab off.' }
+  })
+
+  // /coanda-baseline: the band off but counting (week 1 of the KPI test), or back on.
+  on('command.run', { command: 'coanda-baseline' }, async $ => {
+    const goingOff = (await getKpi($)).mode === 'on'
+    await setKpiMode($, goingOff ? 'off' : 'on')
+    // This session also counts under the new mode, so its per-session figures have a session to divide by.
+    await noteKpi($, dayKey(await $.clock.now()), { sessions: 1 })
+    $.ui.invalidate('ui.render')
+
+    return {
+      text: goingOff
+        ? 'Baseline on: the band is hidden and Claude asks in the chat; Coanda keeps counting. Run /coanda-baseline again to turn the band back on.'
+        : 'Baseline off: the band is back. /coanda-kpi shows both weeks.',
+    }
+  })
+
+  // /coanda-kpi: the KPI page, on or off. While on, the band draws it only (in the baseline too).
+  on('command.run', { command: 'coanda-kpi' }, async $ => {
+    const isOn = await updateKpiView($, was => !was)
+    $.ui.invalidate('ui.render')
+
+    return { text: isOn ? 'KPIs are shown above the prompt. Run /coanda-kpi again to hide them.' : 'KPIs hidden.' }
   })
 
   // /coanda-grid: the measuring page, on or off. While on, the band draws it only.
@@ -795,6 +858,16 @@ export const register: Register = on => {
         },
       )
     }
+
+    if (await getKpiView($)) {
+      return renderKpi({ ui: $.ui.resolve(e), columns: e.props.bodyColumns, dispatch: async () => undefined }, await getKpi($), async () => {
+        await updateKpiView($, () => false)
+        $.ui.invalidate('ui.render')
+      })
+    }
+
+    // The baseline week: the band shows nothing (Coanda only counts).
+    if ((await getKpi($)).mode === 'off') return renderBand({ kind: 'hidden' }, { ui: $.ui.resolve(e), columns: e.props.bodyColumns, dispatch: async () => undefined })
 
     if (await getGrid($)) return renderGrid({ ui: $.ui.resolve(e), columns: e.props.bodyColumns, dispatch: async () => undefined })
 

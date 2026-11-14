@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { StateDollar } from 'claude-code'
 
-import type { Asked, Card, DayWins, FocusResult, GoalsProposal, Moment, Pending, Setup, SetupDraft, ShutdownDoc, Standup, Step, Suggestion, TypedPrimary } from '../types'
+import type { Asked, Card, DayWins, FocusResult, GoalsProposal, GoalsSaved, KpiDoc, Moment, Pending, Setup, SetupDraft, ShutdownDoc, Standup, Step, Suggestion, TypedPrimary } from '../types'
+import { NO_KPI } from './kpi'
 
 // Every atom of the mod lives here: this session's values, kept in $.state.
 //
@@ -40,6 +41,12 @@ const setupDraft = atom({ plugin: 'coanda', key: 'setupDraft' } as const, NO_DRA
 const goalsAsking = atom({ plugin: 'coanda', key: 'goalsAsking' } as const, false)
 // Claude's proposal for the goals file (`propose_goals`), shown in Setup until saved or dropped.
 const goalsProposal = atom({ plugin: 'coanda', key: 'goalsProposal' } as const, null as GoalsProposal | null)
+// The confirmation after the goals are kept: 'waiting' after Save these until Claude's file holds goals, 'saved' while
+// "✓ Saved" shows (until Done), 'no' otherwise.
+const goalsSaved = atom({ plugin: 'coanda', key: 'goalsSaved' } as const, 'no' as GoalsSaved)
+// The KPI document as store.ts last read or wrote it (mode and daily counts), and whether /coanda-kpi shows it.
+const kpi = atom({ plugin: 'coanda', key: 'kpi' } as const, NO_KPI)
+const kpiView = atom({ plugin: 'coanda', key: 'kpiView' } as const, false)
 const detailsOpen = atom({ plugin: 'coanda', key: 'detailsOpen' } as const, false)
 // Today's Primary typed in the band, as store.ts last read or wrote it; null when none.
 // /coanda-specimen: the band shows every drawing option once, to see how the desktop draws them.
@@ -203,6 +210,30 @@ export async function getGoalsProposal($: StateDollar): Promise<GoalsProposal | 
 
 export async function updateGoalsProposal($: StateDollar, change: (now: GoalsProposal | null) => GoalsProposal | null): Promise<GoalsProposal | null> {
   return update($, goalsProposal, change)
+}
+
+export async function getGoalsSaved($: StateDollar): Promise<GoalsSaved> {
+  return read($, goalsSaved)
+}
+
+export async function updateGoalsSaved($: StateDollar, change: (now: GoalsSaved) => GoalsSaved): Promise<GoalsSaved> {
+  return update($, goalsSaved, change)
+}
+
+export async function getKpi($: StateDollar): Promise<KpiDoc> {
+  return read($, kpi)
+}
+
+export async function updateKpi($: StateDollar, change: (now: KpiDoc) => KpiDoc): Promise<KpiDoc> {
+  return update($, kpi, change)
+}
+
+export async function getKpiView($: StateDollar): Promise<boolean> {
+  return read($, kpiView)
+}
+
+export async function updateKpiView($: StateDollar, change: (now: boolean) => boolean): Promise<boolean> {
+  return update($, kpiView, change)
 }
 
 export async function getDetailsOpen($: StateDollar): Promise<boolean> {

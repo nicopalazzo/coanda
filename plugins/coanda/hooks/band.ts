@@ -271,14 +271,31 @@ const laneLine = (lane: Lane, i: number, now: number): string => {
   return `Lane ${i + 1}  ${lane.outcome}${end === '' ? '' : ` · ${end}`}`
 }
 
+// The empty state leads with what the person gets (Nicolas, 14 Nov: the benefit line from onboarding-v1.html).
+export const NOTHING_LINE = 'Your goals, always in view. Claude stays on them.'
+
 const SKIP: BandButton = { key: 'setup-skip', label: 'Skip for now', variant: 'link', action: { kind: 'setupSkip' } }
 const ask = (key: string, label: string, variant: 'primary' | 'secondary', kind: GoalsAsk): BandButton => ({ key, label, variant, action: { kind: 'goalsAsk', ask: kind } })
+
+// "✓ Saved · Goal and 3 Lanes in ~/.claude/goals.md": what the goals file holds, with the home folder as ~.
+export function savedLines(s: Pick<Snapshot, 'focus' | 'goalsPath'>): string[] {
+  const hasGoal = s.focus.status === 'ok' && primaryText(s.focus) !== ''
+  const lanes = Math.min(s.focus.lanes.length, MAX_LANES)
+  const laneWords = lanes === 0 ? '' : `${lanes} Lane${lanes === 1 ? '' : 's'}`
+  const what = [hasGoal ? 'Goal' : '', laneWords].filter(w => w !== '').join(' and ') || 'Goals'
+  const where = s.goalsPath.replace(/^\/(?:Users|home)\/[^/]+/, '~')
+
+  return [`✓ Saved · ${what} in ${where}`, 'When Claude reaches a choice that could take it off these, it shows up here as buttons.']
+}
 
 // The Setup moment (band-rebuild-plan.md section 3, D2, D3): it asks the person nothing; it reads the goals
 // file and shows what it found, and its buttons ask Claude. State 1: Claude was asked, wait. Goals found:
 // confirm or change. Nothing found: set up with Claude or let it look. A file that cannot be read: say so.
 function setupRows(s: Snapshot): BandRow[] {
   const state = goalsState(s.focus)
+
+  // The confirmation (onboarding-v1.html, success state): what was saved, where, and what Coanda does now.
+  if (s.goalsSaved === 'saved') return [{ part: 'setup', text: savedLines(s), buttons: [{ key: 'setup-done', label: 'Done', variant: 'primary', action: { kind: 'setupDone' } }] }]
 
   if (s.goalsAsking) return [{ part: 'setup', text: ['Asking Claude about your goals and Lanes…'], buttons: [SKIP] }]
 
@@ -317,7 +334,7 @@ function setupRows(s: Snapshot): BandRow[] {
   return [
     {
       part: 'setup',
-      text: ['A Goal is the one thing that counts today.', 'A Lane is a longer outcome with a date, like portfolio live by 14 Dec.'],
+      text: [NOTHING_LINE, 'A Goal for today, Lanes for the weeks ahead.'],
       buttons: [...demo, ask('setup-ask', 'Set up with Claude', demo.length > 0 ? 'secondary' : 'primary', 'setup'), ask('setup-find', 'Find them for me', 'secondary', 'find'), SKIP],
     },
   ]
