@@ -2,6 +2,10 @@
 
 One line per release. Newest first.
 
+## 0.1.61: Setup waits for the change
+
+- Setup: after "Change" (or "Ask Claude to fix it") the band no longer goes back to the old goals when Claude asks its question in the chat. It says "Changing your goals with Claude: answer in the chat", offers "Cancel", and shows the new goals once the file has really changed.
+
 ## 0.1.60: French, Spanish and Simplified Chinese
 
 - The band speaks English, French, Spanish and Simplified Chinese. `/coanda-language fr|es|zh|en|auto` chooses it and wins over the rest (the desktop app has no language setting Coanda can read). Without a choice, the language comes from the Claude Code `language` setting, then the language of your goals file, then the system language (`LANG`); English when none says.

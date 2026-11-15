@@ -59,6 +59,8 @@ import {
   getCards,
   getDetailsOpen,
   getGoalsAsking,
+  getGoalsChange,
+  updateGoalsChange,
   updateGoalsAsking,
   getGoalsSaved,
   updateGoalsSaved,
@@ -160,10 +162,11 @@ async function goalsSource($: State & Pick<EngineInterface, 'store' | 'env'>): P
   }
 }
 
+// What the goals file says, read again; then the band redraws. Returns the file's text (undefined when there is none).
 // What the goals file says, read again; then the band redraws. A saved path that cannot be read, or
 // a goals file that exists and cannot be read, becomes plain words; a goals file that is not there
 // yet is "nothing found", not an error.
-async function refreshFocus($: State & Pick<EngineInterface, 'fs' | 'store' | 'ui' | 'clock' | 'env'>) {
+async function refreshFocus($: State & Pick<EngineInterface, 'fs' | 'store' | 'ui' | 'clock' | 'env'>): Promise<string | undefined> {
   let found = NO_FOCUS
   let text: string | undefined
   try {
@@ -178,6 +181,8 @@ async function refreshFocus($: State & Pick<EngineInterface, 'fs' | 'store' | 'u
   await refreshLang($, text)
   await updateFocus($, () => found)
   $.ui.invalidate('ui.render')
+
+  return text
 }
 
 // The language the band speaks: the person's own choice (/coanda-language), then the Claude Code `language` setting,
@@ -215,6 +220,7 @@ async function snapshot($: State & Pick<EngineInterface, 'clock' | 'session' | '
     focus: await getFocus($),
     goalsPath: (await goalsSource($)).path ?? '',
     goalsAsking: await getGoalsAsking($),
+    goalsChanging: (await getGoalsChange($)) !== null,
     goalsProposal: await getGoalsProposal($),
     goalsSaved: await getGoalsSaved($),
     sessionPrimary,
@@ -326,7 +332,11 @@ async function goalsAsk($: Presser, ask: 'setup' | 'find' | 'change' | 'fix') {
   const { path } = await goalsSource($)
   if (path === null) return
 
+  // What the file says now ('' when it cannot be read): the wait for a change compares with it.
+  const currentText = await readFocusFile($, path).catch(() => '')
   await updateGoalsAsking($, () => true)
+  // Change and Fix work on a file that is there: the wait ends when its text is no longer what it is now.
+  await updateGoalsChange($, () => (ask === 'change' || ask === 'fix' ? currentText : null))
   $.ui.invalidate('ui.render')
   // In the demo, Claude looks only in the demo folder.
   const onlyIn = (await getDemoMode($)) === 'on' ? await demoFolder($) : undefined
@@ -437,6 +447,10 @@ async function dispatch($: Presser, action: BandAction): Promise<void> {
       return goalsProposal($, action.what)
     case 'goalsKeep':
       return goalsKeep($)
+    case 'goalsCancel':
+      await updateGoalsAsking($, () => false)
+      await updateGoalsChange($, () => null)
+      return
     case 'setupDone':
     case 'setupSkip':
       return finishSetupMoment($)
@@ -605,9 +619,14 @@ export const register: Register = on => {
     }
     // Claude's turn ended after Setup asked it: read the goals file; "Asking Claude" goes once it holds goals or is unreadable.
     if (e.agentId === undefined && (await getGoalsAsking($))) {
-      await refreshFocus($)
-      if (goalsState(await getFocus($)) !== 'nothing') {
+      const text = await refreshFocus($)
+      const was = await getGoalsChange($)
+      // Waiting for a change (Change, Fix): only a file that differs from the one at the press ends it; Claude's question in
+      // the chat does not. Otherwise: once the file holds goals or cannot be read.
+      const isOver = was === null ? goalsState(await getFocus($)) !== 'nothing' : text !== undefined && text !== was && goalsState(await getFocus($)) === 'found'
+      if (isOver) {
         await updateGoalsAsking($, () => false)
+        await updateGoalsChange($, () => null)
         // After Save these: Claude wrote the file, so the confirmation shows.
         if (goalsState(await getFocus($)) === 'found') await updateGoalsSaved($, now => (now === 'waiting' ? 'saved' : now))
       }

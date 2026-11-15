@@ -39,6 +39,9 @@ const setupDraft = atom({ plugin: 'coanda', key: 'setupDraft' } as const, NO_DRA
 // Whether the Primary row's Details (the "done when" line and the Lane) is open.
 // Setup has sent Claude a message about the goals file and waits for the file to fill (state 1, "Asking Claude").
 const goalsAsking = atom({ plugin: 'coanda', key: 'goalsAsking' } as const, false)
+// What the goals file said when the person pressed Change or Fix: Setup waits until the file differs from it (so Claude's
+// question in the chat does not end the wait). null when the wait is for a file that does not hold goals yet.
+const goalsChange = atom({ plugin: 'coanda', key: 'goalsChange' } as const, null as string | null)
 // Claude's proposal for the goals file (`propose_goals`), shown in Setup until saved or dropped.
 const goalsProposal = atom({ plugin: 'coanda', key: 'goalsProposal' } as const, null as GoalsProposal | null)
 // The confirmation after the goals are kept: 'waiting' after Save these until Claude's file holds goals, 'saved' while
@@ -194,6 +197,14 @@ export async function getSetupDraft($: StateDollar): Promise<SetupDraft> {
 
 export async function updateSetupDraft($: StateDollar, change: (now: SetupDraft) => SetupDraft): Promise<SetupDraft> {
   return update($, setupDraft, change)
+}
+
+export async function getGoalsChange($: StateDollar): Promise<string | null> {
+  return read($, goalsChange)
+}
+
+export async function updateGoalsChange($: StateDollar, change: (now: string | null) => string | null): Promise<string | null> {
+  return update($, goalsChange, change)
 }
 
 export async function getGoalsAsking($: StateDollar): Promise<boolean> {

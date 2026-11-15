@@ -146,6 +146,8 @@ export type Snapshot = {
   goalsPath: string
   // Setup has asked Claude (a message sent from the band) and waits for the goals file to fill.
   goalsAsking: boolean
+  // The wait is for a change to a goals file that already holds goals (Change, Fix): Setup says so and offers Cancel.
+  goalsChanging?: boolean
   // Claude's proposal for the goals file (propose_goals), not saved yet; null when none.
   goalsProposal: GoalsProposal | null
   // The confirmation after the goals are kept ("✓ Saved", until Done).
@@ -188,6 +190,7 @@ export type BandAction =
   | { kind: 'goalsAsk'; ask: 'setup' | 'find' | 'change' | 'fix' }
   // The proposal Setup shows: save it (Claude writes the file), change it (talk it over), or drop it.
   | { kind: 'goalsProposal'; what: 'save' | 'revise' | 'drop' }
+  | { kind: 'goalsCancel' } // "Cancel" while a change is awaited: back to the goals as they are
   | { kind: 'goalsKeep' } // "Looks right": the goals file found is kept as the goals file, Setup is finished
   | { kind: 'setupDone' } // "Done" on the confirmation: Setup is finished
   | { kind: 'setupSkip' } // "Skip for now": Setup is finished without keeping anything
@@ -247,6 +250,7 @@ declare module 'claude-code' {
       setupOpen: boolean
       setupDraft: SetupDraft
       goalsAsking: boolean
+      goalsChange: string | null
       goalsProposal: GoalsProposal | null
       goalsSaved: GoalsSaved
       kpi: KpiDoc

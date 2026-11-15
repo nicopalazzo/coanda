@@ -884,17 +884,51 @@ test('a refused send never breaks the band: "Asking Claude" shows and Skip for n
   await ui.unmount()
 })
 
-test('Setup: "Change" asks Claude about the file already there; "Skip for now" ends the wait', async ($, on) => {
-  const { ui, sent } = await bandOver($, on, { setup: undefined, files: { [GOALS_PATH]: GOALS_TEXT }, env: { HOME: '/home/n' } })
+test('Setup: "Change" waits for the file to change, not for Claude\'s question; "Cancel" gives the old goals back', async ($, on) => {
+  const own = { setup: undefined, files: { [GOALS_PATH]: GOALS_TEXT } as Record<string, string>, env: { HOME: '/home/n' } }
+  const { ui, sent } = await bandOver($, on, own)
 
   await ui.press({ key: 'setup-change' })
   expect(sent[0]).toContain('change my goals')
-  expect(await texts(ui)).toContain('Asking Claude')
+  expect(await texts(ui)).toContain('Changing your goals with Claude: answer in the chat. The new version shows here once it is saved.')
+  expect(await setupButtons(ui)).toEqual(['Cancel'])
+
+  // Claude's turn ends with its question: the old goals do not come back, and nothing on the band acts on them.
   await done($, 't1', 'What would you like to change?')
-  expect(await texts(ui)).toContain('Goal    Ship the v0.1 install')
+  expect(await texts(ui)).toContain('Changing your goals with Claude')
+  expect(await texts(ui)).not.toContain('Goal    Ship the v0.1 install')
+  expect(await setupButtons(ui)).toEqual(['Cancel'])
+
+  // The person answers, Claude rewrites the file: its turn ends and the new goals show.
+  own.files[GOALS_PATH] = '## Today\n- **Primary (N): Ship the v0.2 install.**\n- **Lane 1 — Install:** portfolio live by 14 Dec.\n'
+  await done($, 't2', 'Done: the file is rewritten.')
+  expect(await texts(ui)).toContain('Goal    Ship the v0.2 install')
+  expect(await texts(ui)).not.toContain('Changing your goals with Claude')
+  expect(await setupButtons(ui)).toEqual(['Looks right', 'Change', 'Skip for now'])
+
+  // Changing again, then thinking better of it: "Cancel" shows the goals as they are.
   await ui.press({ key: 'setup-change' })
-  await ui.press({ key: 'setup-skip' })
-  expect(await ui.find({ type: 'Text', text: /^SET UP YOUR GOALS$/ })).toBeUndefined()
+  expect(await setupButtons(ui)).toEqual(['Cancel'])
+  await ui.press({ key: 'setup-cancel' })
+  expect(await texts(ui)).toContain('Goal    Ship the v0.2 install')
+  expect(await setupButtons(ui)).toEqual(['Looks right', 'Change', 'Skip for now'])
+  await ui.unmount()
+})
+
+test('Setup: "Ask Claude to fix it" waits the same way, until the file can be read', async ($, on) => {
+  const own = { setup: undefined, files: {} as Record<string, string>, unreadable: [GOALS_PATH], env: { HOME: '/home/n' } }
+  const { ui, sent } = await bandOver($, on, own)
+
+  await ui.press({ key: 'setup-fix' })
+  expect(sent[0]).toContain('cannot read my goals file')
+  expect(await texts(ui)).toContain('Changing your goals with Claude')
+  await done($, 't1', 'The file has a stray tab.')
+  expect(await texts(ui)).toContain('Changing your goals with Claude')
+
+  own.unreadable = []
+  own.files[GOALS_PATH] = GOALS_TEXT
+  await done($, 't2', 'Fixed.')
+  expect(await texts(ui)).toContain('Goal    Ship the v0.1 install')
   await ui.unmount()
 })
 
@@ -2095,7 +2129,7 @@ test('row budget: Setup in every state fits 9 rows (the content, not the lamp st
   // State 1: Claude was asked.
   await ui.press({ key: 'setup-change' })
   await check('Setup, asking Claude')
-  await ui.press({ key: 'setup-skip' })
+  await ui.press({ key: 'setup-cancel' })
 
   // State 4: Claude proposes a Goal and 3 Lanes.
   await $.command.run({ command: 'coanda-setup' } as never)
@@ -2235,7 +2269,7 @@ test('/coanda-baseline hides the band, refuses its tools and counts as off; /coa
 
 // ---- The band in French, Spanish and Simplified Chinese --------------------------------------------
 
-const ENGLISH_ONLY = ['Skip for now', 'Looks right', 'Set up with Claude', 'Find them for me', 'Save these', 'Not these', 'Idle', 'Details', 'Not for me', 'Hard to undo', 'Later', 'Working', 'Shutdown', 'Not today', 'Save to journal', 'Set your Primary', 'Not now', 'Pull the cord', 'No Lane set', 'Asking Claude']
+const ENGLISH_ONLY = ['Skip for now', 'Looks right', 'Set up with Claude', 'Find them for me', 'Save these', 'Not these', 'Idle', 'Details', 'Not for me', 'Hard to undo', 'Later', 'Working', 'Shutdown', 'Not today', 'Save to journal', 'Set your Primary', 'Not now', 'Pull the cord', 'No Lane set', 'Asking Claude', 'Changing your goals', '"Cancel"']
 
 test('the band in French, Spanish and Chinese: every moment speaks the language, fits its budget, and leaves no English or raw {hole}', () => {
   const none: Snapshot['focus'] = { status: 'none', primary: '', laneId: '', lanes: [] }
@@ -2245,6 +2279,7 @@ test('the band in French, Spanish and Chinese: every moment speaks the language,
     ['setup, nothing found', { setup: fresh, focus: none }],
     ['setup, goals found', { setup: fresh, focus: ok }],
     ['setup, asking', { setup: fresh, goalsAsking: true }],
+    ['setup, changing', { setup: fresh, goalsAsking: true, goalsChanging: true, focus: ok }],
     ['setup, unreadable', { setup: fresh, focus: { status: 'unreadable', primary: '', laneId: '', lanes: [] } }],
     ['setup, saved', { setup: fresh, goalsSaved: 'saved', focus: ok }],
     ['setup, proposal', { setup: fresh, goalsProposal: { goal: 'Ship', lanes: [{ name: 'Visible', outcome: 'live', by: '14 Dec' }] } }],

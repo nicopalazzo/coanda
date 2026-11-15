@@ -294,6 +294,9 @@ function setupRows(s: Snapshot): BandRow[] {
   // The confirmation (onboarding-v1.html, success state): what was saved, where, and what Coanda does now.
   if (s.goalsSaved === 'saved') return [{ part: 'setup', text: savedLines(s), buttons: [{ key: 'setup-done', label: t('setup.done'), variant: 'primary', action: { kind: 'setupDone' } }] }]
 
+  // Changing goals that exist: say so, and no button acts on the old content; "Cancel" gives it back.
+  if (s.goalsAsking && s.goalsChanging === true) return [{ part: 'setup', text: [t('setup.changing')], buttons: [{ key: 'setup-cancel', label: t('setup.cancel'), variant: 'link', action: { kind: 'goalsCancel' } }] }]
+
   if (s.goalsAsking) return [{ part: 'setup', text: [t('setup.asking')], buttons: [skip()] }]
 
   // State 4: Claude proposes. Stamped inferred; saving is Claude's job (the message it gets writes the file).
