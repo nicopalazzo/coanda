@@ -2,6 +2,11 @@
 
 One line per release. Newest first.
 
+## 0.1.60: French, Spanish and Simplified Chinese
+
+- The band speaks English, French, Spanish and Simplified Chinese. `/coanda-language fr|es|zh|en|auto` chooses it and wins over the rest (the desktop app has no language setting Coanda can read). Without a choice, the language comes from the Claude Code `language` setting, then the language of your goals file, then the system language (`LANG`); English when none says.
+- Your goals file can be written in any of the four languages (`## Aujourd'hui`, `**Prioridad`, `**主线 1 —` …, dates like "d'ici le 14 déc.", "para el 14 de diciembre", "12月14日前"). English words always work too. Claude is asked to write the file in your language.
+
 ## 0.1.59: onboarding confirmation and KPI counting
 
 - Setup: the empty state leads with "Your goals, always in view. Claude stays on them."; after "Looks right" or "Save these" a confirmation says what was saved and where, then "Done".

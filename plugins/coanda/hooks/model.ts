@@ -1,7 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { Moment, Pending, Reply } from '../types'
-import { NEXT_SYSTEM, clip, parseNext } from './next'
+import { clip, nextSystem, parseNext } from './next'
 
 // The one door to the model: no other file calls $.model.complete, once per reply.
 // Reads where the work stands after an answer: the moment, the question and its likely answers,
@@ -10,7 +10,7 @@ import { NEXT_SYSTEM, clip, parseNext } from './next'
 export async function askReply($: Pick<EngineInterface, 'model'>, p: Pending): Promise<Reply> {
   const reply = await $.model.complete({
     model: 'haiku',
-    system: NEXT_SYSTEM,
+    system: nextSystem(),
     prompt: `User asked:\n${clip(p.prompt, 3000)}\n\nAssistant replied:\n${clip(p.answer, 6000)}\n\nJSON:`,
     maxTokens: 300,
     effort: 'low',

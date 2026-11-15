@@ -1,3 +1,4 @@
+import { t } from './i18n'
 import type { Draw } from './render'
 
 // The lamp: Setup's opening (14 Nov 2026). Every time Setup runs, the band is first dark with one button,
@@ -91,7 +92,7 @@ export function renderLamp(inner: JSX.Element, draw: Draw, controls: LampControl
           <Svg
             key={controls.phase === 'dark' ? 'lamp-dark' : 'lamp-light'}
             source={lampSvg(controls.phase === 'dark' ? 'dark' : 'light', wide, tall)}
-            alt={controls.phase === 'dark' ? 'The band is dark. Press Pull the cord to turn the light on.' : 'The light is turning on.'}
+            alt={controls.phase === 'dark' ? t('lamp.altDark') : t('lamp.altOn')}
             width={wide}
             height={tall}
             isInteractive
@@ -111,7 +112,7 @@ export function renderLamp(inner: JSX.Element, draw: Draw, controls: LampControl
           borderColor="#C9CCE0"
           paddingX="sm"
         >
-          <Button key="lamp-pull" variant="primary" label="Pull the cord" onPress={controls.onPull} />
+          <Button key="lamp-pull" variant="primary" label={t('lamp.pull')} onPress={controls.onPull} />
         </Box>
       ) : null}
     </Box>

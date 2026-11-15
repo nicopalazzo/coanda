@@ -3,6 +3,8 @@
 // Only counts are kept, never the words of a message or a command. Pure: no host calls.
 
 import type { KpiCounts, KpiDoc, KpiMode } from '../types'
+import { t, tn } from './i18n'
+import { REDIRECT } from './lexicon'
 
 export const NO_COUNTS: KpiCounts = { sessions: 0, turns: 0, corrections: 0, interrupts: 0, rework: 0, decided: 0, decideMs: 0 }
 export const NO_KPI: KpiDoc = { v: 1, mode: 'on', days: {} }
@@ -19,8 +21,6 @@ export function toKpi(raw: unknown): KpiDoc {
 
 // A correction: the message starts with a word that redirects Claude. First-word counting misses some
 // corrections and catches some false ones; the KPI page says so.
-const REDIRECT = /^\s*(?:no|nope|stop|wrong|not that|undo|revert|actually|instead)\b/i
-
 export function isCorrection(text: string): boolean {
   return REDIRECT.test(text)
 }
@@ -59,7 +59,7 @@ export function totalOf(doc: KpiDoc, mode: KpiMode): KpiCounts & { days: number 
 }
 
 const perSession = (n: number, sessions: number): string => (sessions === 0 ? '—' : (n / sessions).toFixed(1))
-const seconds = (c: KpiCounts): string => (c.decided === 0 ? '—' : `${Math.round(c.decideMs / c.decided / 1000)} s`)
+const seconds = (c: KpiCounts): string => (c.decided === 0 ? '—' : t('kpi.sec', { n: Math.round(c.decideMs / c.decided / 1000) }))
 
 export type KpiLine = { name: string; off: string; on: string }
 
@@ -67,17 +67,17 @@ export type KpiLine = { name: string; off: string; on: string }
 export function kpiLines(doc: KpiDoc): { off: string; on: string; lines: KpiLine[] } {
   const off = totalOf(doc, 'off')
   const on = totalOf(doc, 'on')
-  const head = (t: ReturnType<typeof totalOf>) => `${t.days} day${t.days === 1 ? '' : 's'}, ${t.sessions} session${t.sessions === 1 ? '' : 's'}`
+  const head = (one: ReturnType<typeof totalOf>) => t('kpi.head', { days: tn('kpi.days', one.days), sessions: tn('kpi.sessions', one.sessions) })
 
   return {
     off: head(off),
     on: head(on),
     lines: [
-      { name: 'Corrections / session', off: perSession(off.corrections, off.sessions), on: perSession(on.corrections, on.sessions) },
-      { name: 'Interrupted turns / session', off: perSession(off.interrupts, off.sessions), on: perSession(on.interrupts, on.sessions) },
-      { name: 'Rework / session', off: perSession(off.rework, off.sessions), on: perSession(on.rework, on.sessions) },
-      { name: 'Turns / session', off: perSession(off.turns, off.sessions), on: perSession(on.turns, on.sessions) },
-      { name: 'Time to decide (band)', off: seconds(off), on: seconds(on) },
+      { name: t('kpi.corrections'), off: perSession(off.corrections, off.sessions), on: perSession(on.corrections, on.sessions) },
+      { name: t('kpi.interrupts'), off: perSession(off.interrupts, off.sessions), on: perSession(on.interrupts, on.sessions) },
+      { name: t('kpi.rework'), off: perSession(off.rework, off.sessions), on: perSession(on.rework, on.sessions) },
+      { name: t('kpi.turns'), off: perSession(off.turns, off.sessions), on: perSession(on.turns, on.sessions) },
+      { name: t('kpi.decide'), off: seconds(off), on: seconds(on) },
     ],
   }
 }

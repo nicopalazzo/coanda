@@ -1,4 +1,5 @@
 import type { Standup } from '../types'
+import { t } from './i18n'
 
 // The stand-up nudge: after RUNS long runs in a row, one quiet line on the Working or Resting row.
 // A run is one Claude turn; "long" is over LONG_MS; a break longer than BREAK_MS between two runs
@@ -33,4 +34,4 @@ export function nudgeShows(log: Standup, now: number, isWorking: boolean): boole
   return isWorking || now - log.lastEndAt <= BREAK_MS
 }
 
-export const nudgeText = (log: Standup): string => `${log.streak} long runs in a row. Good moment to stand up and stretch.`
+export const nudgeText = (log: Standup): string => t('nudge.text', { n: log.streak })

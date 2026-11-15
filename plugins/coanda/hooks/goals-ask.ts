@@ -1,25 +1,40 @@
 import type { GoalsProposal } from '../types'
+import { t } from './i18n'
 
 // What Setup sends Claude when the person presses a button that asks for help with the goals file
 // (band-rebuild-plan.md section 3, D2, D3). Pure: the path and the scope come in as arguments.
 // Claude writes the file in the format `parseFocusMd` reads, so the band can show it back.
 export type GoalsAsk = 'setup' | 'find' | 'change' | 'fix'
 
-export const GOALS_FORMAT = ['## Today', '- **Primary (N): <the goal> (Lane 1).**', '- **Lane 1 — <name>:** <the outcome> by <day month>.', '- **Lane 2 — <name>:** <the outcome> by <day month>.'].join('\n')
+// The format of the goals file in the person's language: Claude is asked to write it with these words, and the parser
+// reads them (lexicon.ts). `<…>` marks what Claude fills in.
+export function goalsFormat(): string {
+  const colon = t('file.colon')
+  const bold = colon.trimEnd()
+  const lane = t('word.lane')
+  const by = t('file.laneBy', { date: `<${t('fmt.date')}>` })
+
+  return [
+    `## ${t('file.today')}`,
+    `- **${t('file.primary')}${t('file.note', { text: 'N' })}${colon}<${t('fmt.goal')}>${t('file.note', { text: `${lane} 1` })}${t('file.dot')}**`,
+    `- **${lane} 1 — <${t('fmt.name')}>${bold}** <${t('fmt.outcome')}>${by}${t('file.dot')}`,
+    `- **${lane} 2 — <${t('fmt.name')}>${bold}** <${t('fmt.outcome')}>${by}${t('file.dot')}`,
+  ].join('\n')
+}
 
 // `onlyIn`: a folder to look in and nowhere else (the demo's); absent, Claude looks through the person's own files.
 export function goalsMessage(ask: GoalsAsk, path: string, onlyIn?: string): string {
-  const format = `Write it to ${path} in this format, and nothing else in that file:\n${GOALS_FORMAT}`
+  const format = t('ask.format', { path, format: goalsFormat() })
 
   switch (ask) {
     case 'setup':
-      return `Set up my goals and Lanes for Coanda. Check whether ${path} already has them. If it does, tell me what you found. If not, explain in one line each what a Goal (the one thing that counts today) and a Lane (a longer outcome with a date) are, ask me for mine, and let me skip. ${format}`
+      return t('ask.setup', { path, format })
     case 'find':
-      return `Look through ${onlyIn === undefined ? 'my files' : `the folder ${onlyIn} and nowhere else`} for things that look like my Goal or my Lanes, then show what you found with the propose_goals tool. Do not write ${path} yourself: if I press "Save these" in the band, you get a message to write it.`
+      return t('ask.find', { where: onlyIn === undefined ? t('ask.where.mine') : t('ask.where.folder', { folder: onlyIn }), path, save: t('setup.save') })
     case 'change':
-      return `I want to change my goals or Lanes in ${path}. Show me what is in it, ask what to change, and rewrite it once I confirm. ${format}`
+      return t('ask.change', { path, format })
     case 'fix':
-      return `Coanda cannot read my goals file ${path}. Look at it, tell me what is wrong, and fix it once I agree. ${format}`
+      return t('ask.fix', { path, format })
   }
 }
 
@@ -47,22 +62,24 @@ export function toProposal(input: unknown): GoalsProposal | string {
 }
 
 // A Lane as one line of the band: "Lane 1  Visible: be visible with a product use case · by 14 Dec".
-export const proposalLane = (lane: GoalsProposal['lanes'][number], i: number): string => `Lane ${i + 1}  ${lane.name}: ${lane.outcome}${lane.by === '' ? '' : ` · by ${lane.by}`}`
+export const proposalLane = (lane: GoalsProposal['lanes'][number], i: number): string =>
+  `${t('word.lane')} ${i + 1}  ${lane.name}: ${lane.outcome}${lane.by === '' ? '' : ` · ${t('lane.by', { date: lane.by })}`}`
 
 // The proposal as the goals file would hold it, in the format `parseFocusMd` reads.
 export function proposalText(p: GoalsProposal): string {
+  const colon = t('file.colon')
+  const lane = t('word.lane')
+
   return [
-    '## Today',
-    `- **Primary (N): ${p.goal}${p.lanes.length > 0 ? ' (Lane 1)' : ''}.**`,
-    ...p.lanes.map((lane, i) => `- **Lane ${i + 1} — ${lane.name}:** ${lane.outcome}${lane.by === '' ? '' : ` by ${lane.by}`}.`),
+    `## ${t('file.today')}`,
+    `- **${t('file.primary')}${t('file.note', { text: 'N' })}${colon}${p.goal}${p.lanes.length > 0 ? t('file.note', { text: `${lane} 1` }) : ''}${t('file.dot')}**`,
+    ...p.lanes.map((one, i) => `- **${lane} ${i + 1} — ${one.name}${colon.trimEnd()}** ${one.outcome}${one.by === '' ? '' : t('file.laneBy', { date: one.by })}${t('file.dot')}`),
   ].join('\n')
 }
 
 // Pressing Save these / Change on a proposal: Claude writes the file (D3: Coanda only reads it).
 export function proposalMessage(what: 'save' | 'revise', path: string, p: GoalsProposal): string {
-  return what === 'save'
-    ? `Save these goals to ${path}, exactly as written, and nothing else in that file:\n${proposalText(p)}`
-    : `I want to change the goals you proposed:\n${proposalText(p)}\nAsk me what to change, then show the new version with propose_goals.`
+  return what === 'save' ? t('ask.save', { path, text: proposalText(p) }) : t('ask.revise', { text: proposalText(p) })
 }
 
 // The tool Claude calls to show proposed goals in the band, to be saved only when the person agrees.

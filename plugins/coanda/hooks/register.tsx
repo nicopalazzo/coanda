@@ -5,7 +5,8 @@ import { BREATHE_AFTER_MS, bandModel } from './band'
 import { ASK_DECISION, answer, toCard } from './cards'
 import { NO_FOCUS, UNREADABLE_FOCUS, goalsState, parseFocus } from './focus'
 import { PROPOSE_GOALS, goalsMessage, proposalMessage, toProposal } from './goals-ask'
-import { goalsFile, journalPath, readFocusFile, writeJournal } from './io'
+import { goalsFile, journalPath, languageSetting, localeVars, readFocusFile, writeJournal } from './io'
+import { currentLang, langOfName, nativeName, pickLang, setLang, t } from './i18n'
 import { askReply } from './model'
 import { questionToShow, toAsked } from './next'
 import type { PlanInput } from './plan'
@@ -108,7 +109,7 @@ import {
   updateSuggestions,
   NO_DRAFT,
 } from './state'
-import { NO_SETUP, addCard, answerWins, closeCard, deferCard, finishSetup, loadSetup, loadShutdown, loadTypedPrimary, loadWins, noteWins, openWins, readFocusSource, loadKpi, noteKpi, setKpiMode, restore, setFocus, setShutdown, setTypedPrimary } from './store'
+import { NO_SETUP, readChosenLang, setChosenLang, addCard, answerWins, closeCard, deferCard, finishSetup, loadSetup, loadShutdown, loadTypedPrimary, loadWins, noteWins, openWins, readFocusSource, loadKpi, noteKpi, setKpiMode, restore, setFocus, setShutdown, setTypedPrimary } from './store'
 
 // The shell's wiring: one handler per host event, each a short run of named calls; snapshot()
 // gathers what the band reads; dispatch() is the only place a press is carried out.
@@ -164,14 +165,25 @@ async function goalsSource($: State & Pick<EngineInterface, 'store' | 'env'>): P
 // yet is "nothing found", not an error.
 async function refreshFocus($: State & Pick<EngineInterface, 'fs' | 'store' | 'ui' | 'clock' | 'env'>) {
   let found = NO_FOCUS
+  let text: string | undefined
   try {
     const { path, isSaved } = await goalsSource($)
-    if (path !== null && (isSaved || (await $.fs.exists(path)))) found = parseFocus(await readFocusFile($, path), await $.clock.now())
+    if (path !== null && (isSaved || (await $.fs.exists(path)))) {
+      text = await readFocusFile($, path)
+      found = parseFocus(text, await $.clock.now())
+    }
   } catch {
     found = UNREADABLE_FOCUS
   }
+  await refreshLang($, text)
   await updateFocus($, () => found)
   $.ui.invalidate('ui.render')
+}
+
+// The language the band speaks: the person's own choice (/coanda-language), then the Claude Code `language` setting,
+// then the language of the goals file, then the system locale (i18n.ts). Read again with the goals file, so a change shows within a minute.
+async function refreshLang($: Pick<EngineInterface, 'fs' | 'env' | 'store'>, goalsText: string | undefined) {
+  setLang(pickLang({ chosen: await readChosenLang($), setting: await languageSetting($), ...(goalsText === undefined ? {} : { text: goalsText }), locale: await localeVars($) }))
 }
 
 // Acknowledge at once and refuse a second press while the first is on its way (one press, one message).
@@ -359,17 +371,17 @@ async function todaySave($: Presser) {
   const doc = winsOf(await getWins($), now)
   // The goals file Setup reads (a saved path, else ~/.claude/goals.md; in the demo only the demo folder): the journal sits next to it.
   const focusPath = (await goalsSource($)).path
-  if (focusPath === null) return void $.ui.toast('Day record: no goals folder found; the journal sits in a journal folder next to the goals file.')
+  if (focusPath === null) return void $.ui.toast(t('toast.noFolder'))
 
   const path = journalPath(focusPath, journalFile(doc.day))
   try {
     await writeJournal($, path, existing => mergeJournal(existing, doc))
   } catch (err) {
-    return void $.ui.toast(`Day record not saved (${path}): ${String(err instanceof Error ? err.message : err).slice(0, 120)}`)
+    return void $.ui.toast(t('toast.notSaved', { path, why: String(err instanceof Error ? err.message : err).slice(0, 120) }))
   }
 
   await answerWins($, now)
-  $.ui.toast(`Saved to journal: ${headline(doc.items.length)} (${path})`)
+  $.ui.toast(t('toast.saved', { headline: headline(doc.items.length), path }))
 }
 
 // The only place a press is carried out: one case per BandAction.
@@ -455,20 +467,21 @@ export const register: Register = on => {
     if (((await getSetupSeen($)) ?? NO_SETUP).doneAt === null) await updateLamp($, () => 'dark')
     await loadTypedPrimary($)
     // Claude closed in the middle of a demo: the person's data is in the backup until it is restored.
-    if ((await getDemoMode($)) === 'off' && (await backupFound($))) $.ui.toast('Your Coanda data is saved from a demo. Run /coanda-demo to restore it.')
+    if ((await getDemoMode($)) === 'off' && (await backupFound($))) $.ui.toast(t('toast.demoSaved'))
     await loadShutdown($)
     await loadWins($)
     await loadKpi($)
     await noteKpi($, dayKey(await $.clock.now()), { sessions: 1 })
     await refreshFocus($)
     $.clock.every(60000, () => void refreshFocus($))
-    await $.command.register({ name: 'coanda-setup', description: "Open Coanda's Setup at step 1: your goals file and your Lanes" })
-    await $.command.register({ name: 'coanda-today', description: "Show today's wins in the band, with Save to journal" })
+    await $.command.register({ name: 'coanda-setup', description: t('cmd.setup.desc') })
+    await $.command.register({ name: 'coanda-today', description: t('cmd.today.desc') })
     await $.command.register({ name: 'coanda-specimen', description: 'Show or hide every drawing option of the band (for design checks)' })
-    await $.command.register({ name: 'coanda-demo', description: 'Walk through every screen of the band with example data, to correct each one live' })
-    await $.command.register({ name: 'coanda-shutdown', description: "Show the shutdown question now, whatever the hour (for checking it)" })
-    await $.command.register({ name: 'coanda-baseline', description: 'Turn the band off but keep counting (the baseline week), or back on' })
-    await $.command.register({ name: 'coanda-kpi', description: 'Show or hide the KPIs: band off days next to band on days, per session' })
+    await $.command.register({ name: 'coanda-demo', description: t('cmd.demo.desc') })
+    await $.command.register({ name: 'coanda-shutdown', description: t('cmd.shutdown.desc') })
+    await $.command.register({ name: 'coanda-baseline', description: t('cmd.baseline.desc') })
+    await $.command.register({ name: 'coanda-language', description: t('cmd.language.desc') })
+    await $.command.register({ name: 'coanda-kpi', description: t('cmd.kpi.desc') })
     await $.command.register({ name: 'coanda-grid', description: 'Show or hide the grid page: rulers in cells, spacing steps, text sizes, contrast (for design checks)' })
 
     // A reload at the end of a turn loses its turn.complete: read the answer kept while it was written.
@@ -485,7 +498,7 @@ export const register: Register = on => {
     if (typeof card === 'string') return { result: card }
 
     await addCard($, card)
-    $.ui.toast(`New decision: ${card.question}`)
+    $.ui.toast(t('toast.newDecision', { question: card.question }))
 
     return { result: 'Question added to the band. End your turn; the answer comes as a user message.' }
   })
@@ -622,7 +635,7 @@ export const register: Register = on => {
     await refreshFocus($)
     $.ui.invalidate('ui.render')
 
-    return { text: 'Setup is open above the prompt.' }
+    return { text: t('cmd.setup.out') }
   })
 
   // /coanda-demo: the real flow from zero. The person's data is backed up and cleared, then restored when the demo
@@ -630,24 +643,24 @@ export const register: Register = on => {
   on('command.run', { command: 'coanda-demo' }, async $ => {
     if ((await getDemoMode($)) === 'on') {
       const wrong = await restoreMine($)
-      if (wrong.length > 0) return { text: `Your data did not come back the same for: ${wrong.join(', ')}. The backup is kept; nothing was removed.` }
+      if (wrong.length > 0) return { text: t('cmd.demo.wrong', { list: wrong.join(', ') }) }
       await updateDemo($, () => null)
       await refreshFocus($)
 
-      return { text: 'Demo off. Your data is back.' }
+      return { text: t('cmd.demo.off') }
     }
 
     if (await backupFound($)) {
       await updateDemoMode($, () => 'offer')
       $.ui.invalidate('ui.render')
 
-      return { text: 'Your data is saved from an earlier demo. Press "Restore my data" above the prompt.' }
+      return { text: t('cmd.demo.offer') }
     }
 
     await startDemo($)
     $.ui.invalidate('ui.render')
 
-    return { text: 'Demo on: Setup starts from zero. Your own data is saved and comes back when you exit the demo.' }
+    return { text: t('cmd.demo.on') }
   })
 
   // /coanda-shutdown: the shutdown question shows now, whatever the hour or the day's answer, until Save or Skip.
@@ -656,18 +669,18 @@ export const register: Register = on => {
     await updateShutdownForced($, () => true)
     $.ui.invalidate('ui.render')
 
-    return { text: 'The shutdown question is open above the prompt (it shows when no turn is running).' }
+    return { text: t('cmd.shutdown.out') }
   })
 
   // /coanda-today: the day record now, before 17:30 too; the band shows it until Save or Not today.
   on('command.run', { command: 'coanda-today' }, async $ => {
     const now = await $.clock.now()
-    if (winsOf(await getWins($), now).items.length === 0) return { text: 'No wins recorded yet today. A finished task-list step or a commit counts.' }
+    if (winsOf(await getWins($), now).items.length === 0) return { text: t('cmd.today.none') }
 
     await openWins($, now)
     $.ui.invalidate('ui.render')
 
-    return { text: "Today's wins are in the band, above the prompt." }
+    return { text: t('cmd.today.out') }
   })
 
   // /coanda-specimen: a design check, on or off. While on, the band draws the specimen only.
@@ -726,17 +739,32 @@ export const register: Register = on => {
 
     return {
       text: goingOff
-        ? 'Baseline on: the band is hidden and Claude asks in the chat; Coanda keeps counting. Run /coanda-baseline again to turn the band back on.'
-        : 'Baseline off: the band is back. /coanda-kpi shows both weeks.',
+        ? t('cmd.baseline.on')
+        : t('cmd.baseline.off'),
     }
   })
 
   // /coanda-kpi: the KPI page, on or off. While on, the band draws it only (in the baseline too).
+  // /coanda-language fr: the person's own choice, which wins over every other source; `auto` hands it back to them.
+  on('command.run', { command: 'coanda-language' }, async ($, e) => {
+    const arg = (e.args ?? '').trim()
+    const chosen = await readChosenLang($)
+    if (arg === '') return { text: t('cmd.language.now', { name: nativeName(chosen ?? currentLang()) }) }
+
+    const lang = arg.toLowerCase() === 'auto' ? null : langOfName(arg)
+    if (lang === null && arg.toLowerCase() !== 'auto') return { text: t('cmd.language.unknown', { arg: arg.slice(0, 30) }) }
+
+    await setChosenLang($, lang)
+    await refreshFocus($)
+
+    return { text: lang === null ? t('cmd.language.auto', { name: nativeName(currentLang()) }) : t('cmd.language.set', { name: nativeName(lang) }) }
+  })
+
   on('command.run', { command: 'coanda-kpi' }, async $ => {
     const isOn = await updateKpiView($, was => !was)
     $.ui.invalidate('ui.render')
 
-    return { text: isOn ? 'KPIs are shown above the prompt. Run /coanda-kpi again to hide them.' : 'KPIs hidden.' }
+    return { text: isOn ? t('cmd.kpi.on') : t('cmd.kpi.off') }
   })
 
   // /coanda-grid: the measuring page, on or off. While on, the band draws it only.
@@ -818,7 +846,7 @@ export const register: Register = on => {
     const leave = async () => {
       const wrong = await restoreMine($)
       if (wrong.length > 0) {
-        $.ui.toast(`Your data did not come back the same for: ${wrong.join(', ')}. The backup is kept.`)
+        $.ui.toast(t('toast.demoWrong', { list: wrong.join(', ') }))
       } else {
         await updateDemo($, () => null)
         await refreshFocus($)

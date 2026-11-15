@@ -5,6 +5,8 @@ import { close, supersede, toBottom } from './cards'
 import { focusSourceOf, toSetup } from './focus'
 import { getCards, updateCards, updateKpi, updateSetupSeen, updateShutdown, updateTypedPrimary, updateWins } from './state'
 import { addWins, winsOf } from './wins'
+import { toChosenLang } from './i18n'
+import type { Lang } from './i18n'
 import { addKpi, toKpi } from './kpi'
 import type { KpiCounts, KpiMode } from '../types'
 
@@ -184,6 +186,16 @@ export async function noteKpi($: Keeper, day: string, add: Partial<KpiCounts>) {
   const doc = addKpi(toKpi(await $.store.get('kpi')), day, add)
   await $.store.set('kpi', doc)
   await updateKpi($, () => doc)
+}
+
+// The language the person chose with /coanda-language; null when none (then the band picks one itself).
+export async function readChosenLang($: Pick<EngineInterface, 'store'>): Promise<Lang | null> {
+  return toChosenLang(await $.store.get('language'))
+}
+
+export async function setChosenLang($: Pick<EngineInterface, 'store'>, lang: Lang | null) {
+  if (lang === null) await $.store.delete('language')
+  else await $.store.set('language', { v: 1, lang })
 }
 
 export async function setKpiMode($: Keeper, mode: KpiMode) {

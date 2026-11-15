@@ -1,4 +1,6 @@
 import type { Card, DecisionOption, DecisionStatus } from '../types'
+import { t } from './i18n'
+import { BARE_GO, QUIET_EXIT } from './lexicon'
 
 const clip = (value: unknown, max: number): string =>
   typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, max) : ''
@@ -8,8 +10,6 @@ const list = (value: unknown, most: number, max: number): string[] =>
 
 // The quiet exit is added by the band; an option that only says "go" names no choice (no generic
 // approval button: the host keeps tool permissions).
-const QUIET_EXIT = /^(later|skip|not now|not for me)$/i
-const BARE_GO = /^(go|go ahead|ok|okay|yes|proceed|proceed as proposed|continue|do it|approve)$/i
 
 function optionsOf(value: unknown): DecisionOption[] {
   if (!Array.isArray(value)) return []
@@ -88,7 +88,7 @@ export function supersede(cards: Card[], next: Card): Card[] {
   ]
 }
 
-export const answer = (card: Card, option: string): string => `Decision: ${card.question} → ${option}`
+export const answer = (card: Card, option: string): string => `${t('decision')}${card.question} → ${option}`
 
 // The tool Claude calls to put a decision card in the band.
 export const ASK_DECISION = {

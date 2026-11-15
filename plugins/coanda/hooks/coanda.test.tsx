@@ -4,7 +4,9 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import type { BandModel, BandRow, Card, Setup, Snapshot, Step } from '../types'
 import { BREATHE_AFTER_MS, bandModel, overBudget } from './band'
-import { BREATHE_CAPTION, BREATHE_SECONDS, BREATHE_SVG, LABEL_WIDTH } from './render'
+import { BREATHE_SECONDS, BREATHE_SVG, LABEL_WIDTH } from './render'
+import { setLang, t } from './i18n'
+import type { Lang } from './i18n'
 import { close, supersede, toCard } from './cards'
 import { goalsMessage, proposalLane, proposalMessage, proposalText, toProposal } from './goals-ask'
 import { endLabel, goalsState, focusSourceOf, laneText, parseFocus, parseFocusMd, parsePlain, primaryText, shortPrimary } from './focus'
@@ -550,7 +552,8 @@ async function bandOver($: Parameters<TestBody>[0], on: Parameters<TestBody>[1],
   on('tool.call', () => ({ result: {} }))
   on('fs.exists', (_, e) => ({ value: own.files[e.path] !== undefined || (own.unreadable ?? []).includes(e.path) }))
   on('fs.read', (_, e) => {
-    reads.push(e.path)
+    // Claude's own settings.json is read for the language; `reads` counts every other file.
+    if (!e.path.endsWith('/settings.json')) reads.push(e.path)
     const text = own.files[e.path]
     if (text === undefined) throw new Error('no such file')
 
@@ -935,7 +938,7 @@ test('Setup: with no home directory nothing is read and it says nothing was foun
 test('/coanda-setup opens Setup again with the goals file read afresh; "Looks right" closes it', async ($, on) => {
   const { ui, commands, saved } = await bandOver($, on, { setup: SETUP_FILE('/data/goals.md'), files: { '/data/goals.md': GOALS_TEXT }, env: { HOME: '/home/n' } })
 
-  expect(commands).toEqual(['coanda-setup', 'coanda-today', 'coanda-specimen', 'coanda-demo', 'coanda-shutdown', 'coanda-baseline', 'coanda-kpi', 'coanda-grid'])
+  expect(commands).toEqual(['coanda-setup', 'coanda-today', 'coanda-specimen', 'coanda-demo', 'coanda-shutdown', 'coanda-baseline', 'coanda-language', 'coanda-kpi', 'coanda-grid'])
   expect(await primaryOf(ui)).toBe('◎ Ship the v0.1 install')
   await $.command.run({ command: 'coanda-setup' } as never)
   expect(await texts(ui)).toContain('SET UP YOUR GOALS')
@@ -1018,7 +1021,7 @@ test('breathe drawing: a Dusk circle on a 16 s keyframe loop and a fixed muted c
   expect(BREATHE_SVG).toContain('@keyframes')
   expect(BREATHE_SVG).toContain('16s')
   expect(BREATHE_SVG).toContain('prefers-reduced-motion')
-  expect(BREATHE_CAPTION).toBe('one breath while you wait, or ignore it')
+  expect(t('breathe.caption')).toBe('one breath while you wait, or ignore it')
 })
 
 test('breathe in the band: appears 30 s into a run, goes when the run ends', async ($, on) => {
@@ -2227,5 +2230,212 @@ test('/coanda-baseline hides the band, refuses its tools and counts as off; /coa
   expect((saved.kpi as KpiDoc).mode).toBe('on')
   // The band is back (here on Set your Primary: the test has no goals file).
   expect(await buttonsOf(ui)).toEqual(['Set'])
+  await ui.unmount()
+})
+
+// ---- The band in French, Spanish and Simplified Chinese --------------------------------------------
+
+const ENGLISH_ONLY = ['Skip for now', 'Looks right', 'Set up with Claude', 'Find them for me', 'Save these', 'Not these', 'Idle', 'Details', 'Not for me', 'Hard to undo', 'Later', 'Working', 'Shutdown', 'Not today', 'Save to journal', 'Set your Primary', 'Not now', 'Pull the cord', 'No Lane set', 'Asking Claude']
+
+test('the band in French, Spanish and Chinese: every moment speaks the language, fits its budget, and leaves no English or raw {hole}', () => {
+  const none: Snapshot['focus'] = { status: 'none', primary: '', laneId: '', lanes: [] }
+  const ok: Snapshot['focus'] = { status: 'ok', primary: 'Ship the install', laneId: 'lane-1', lanes: [{ id: 'lane-1', outcome: 'Install: live', endDay: '2026-12-14' }, { id: 'lane-2', outcome: 'Page', endText: 'Q1' }] }
+  const fresh = { ...SETUP_DONE, doneAt: null }
+  const moments: [string, Partial<Snapshot>][] = [
+    ['setup, nothing found', { setup: fresh, focus: none }],
+    ['setup, goals found', { setup: fresh, focus: ok }],
+    ['setup, asking', { setup: fresh, goalsAsking: true }],
+    ['setup, unreadable', { setup: fresh, focus: { status: 'unreadable', primary: '', laneId: '', lanes: [] } }],
+    ['setup, saved', { setup: fresh, goalsSaved: 'saved', focus: ok }],
+    ['setup, proposal', { setup: fresh, goalsProposal: { goal: 'Ship', lanes: [{ name: 'Visible', outcome: 'live', by: '14 Dec' }] } }],
+    ['demo setup', { setup: fresh, focus: none, demoGoals: '/d/goals.md' }],
+    ['set your Primary', { focus: none }],
+    ['set your Primary, closed', { focus: { status: 'closed', primary: '', laneId: '', lanes: [], closedAt: '12:44' } }],
+    ['a card', { cards: [cardOf('c1', { isHardToUndo: true })], focus: ok }],
+    ['two cards', { cards: [cardOf('c1'), cardOf('c2', { question: 'Other?' })], focus: ok }],
+    ['a guessed question', { asked: GUESS, focus: ok }],
+    ['sent while working', { sent: 'Only at setup', isWorking: true, focus: ok }],
+    ['working, with steps and breathing', { isWorking: true, workingSince: NOW - 40_000, plan: { steps: [stepOf('Read the file', 'in_progress'), stepOf('Write', 'pending')], planTurn: 0 }, focus: ok }],
+    ['resting, done', { reply: { moment: 'other', isJudgment: false, question: '', done: 'merged', next: '', suggestions: [] }, focus: ok }],
+    ['resting, details open', { detailsOpen: true, focus: ok }],
+    ['resting, a nudge', { standup: { streak: 3, lastEndAt: NOW }, focus: ok }],
+    ['shutdown', { shutdown: { doc: null, draft: '', note: '', forced: true }, focus: ok }],
+    ['the day record', { wins: { v: 1, day: dayKey(NOW), items: [{ text: 'Read the file', kind: 'step', at: 1 }], answered: false, open: true }, focus: ok }],
+  ]
+
+  for (const lang of ['fr', 'es', 'zh'] as Lang[]) {
+    setLang(lang)
+    try {
+      for (const [name, over] of moments) {
+        const model = bandModel(snap(over))
+        const text = JSON.stringify(model)
+
+        expect(`${lang} ${name}: ${overBudget(model).join(', ')}`).toBe(`${lang} ${name}: `)
+        expect(`${lang} ${name}: ${ENGLISH_ONLY.filter(word => text.includes(word)).join(', ')}`).toBe(`${lang} ${name}: `)
+        expect(`${lang} ${name}: ${text.match(/\{[a-z]+\}/g)?.join(', ') ?? ''}`).toBe(`${lang} ${name}: `)
+      }
+    } finally {
+      setLang('en')
+    }
+  }
+})
+
+test('the band in French: Setup, a card, the Lane line and the day record read as French', () => {
+  setLang('fr')
+  try {
+    const setup = bandModel(snap({ setup: { ...SETUP_DONE, doneAt: null }, focus: { status: 'ok', primary: 'Terminer', laneId: 'lane-1', lanes: [{ id: 'lane-1', outcome: 'Preuve: en ligne', endDay: '2026-12-14' }] } }))
+    if (setup.kind !== 'setup') throw new Error('expected setup')
+    expect(setup.heading).toBe('Configure tes objectifs')
+    expect(setup.rows[0]!.text).toEqual(['Objectif    Terminer', 'Axe 1  Preuve: en ligne · d’ici le 14 déc. 2026'])
+    expect(setup.rows[0]!.buttons.map(b => b.label)).toEqual(['C’est bon', 'Modifier', 'Passer pour l’instant'])
+
+    const card = only(bandModel(snap({ cards: [cardOf('c1', { isHardToUndo: true })] })))
+    expect(card).toMatchObject({ label: 'Question', chip: 'Difficile à annuler' })
+    expect(labels(card).at(-1)).toBe('~Plus tard')
+    expect(only(bandModel(snap({ plan: { steps: [stepOf('Lire', 'in_progress'), stepOf('Écrire', 'pending')], planTurn: 0 }, isWorking: true }))).text).toEqual(['Lire · étape 1 sur 2'])
+    expect(only(bandModel(snap({ reply: { moment: 'other', isJudgment: false, question: '', done: 'fusionné', next: '', suggestions: [] } }))).text).toEqual(['En pause · fusionné'])
+  } finally {
+    setLang('en')
+  }
+})
+
+const READY_AT = (files: Record<string, string>, env: Record<string, string> = { HOME: '/home/n' }) => ({ setup: undefined, files, env })
+const SETTINGS = '/home/n/.claude/settings.json'
+// The first Setup opens with the lamp, whose one button sits over the band: leave it out of the buttons.
+const withoutLamp = async (ui: Ui) => (await buttonsOf(ui)).filter(one => !['Pull the cord', 'Tirer le cordon', 'Tirar del cordón', '拉一下灯绳'].includes(one))
+
+test('language, from the Claude Code setting: Setup speaks French, and what Find them sends Claude is French', async ($, on) => {
+  const { ui, sent } = await bandOver($, on, READY_AT({ [SETTINGS]: '{"language":"French"}' }))
+
+  expect(await texts(ui)).toContain('CONFIGURE TES OBJECTIFS')
+  expect(await texts(ui)).toContain('Tes objectifs, toujours sous les yeux. Claude s’y tient.')
+  expect(await withoutLamp(ui)).toEqual(['Configurer avec Claude', 'Les trouver pour moi', 'Passer pour l’instant'])
+  await ui.press({ key: 'setup-find' })
+  expect(sent).toHaveLength(1)
+  expect(sent[0]).toContain('Cherche dans mes fichiers')
+  expect(sent[0]).toContain('« Enregistrer ceux-ci »')
+  setLang('en')
+  await ui.unmount()
+})
+
+const SPANISH = '## Hoy\n- **Prioridad (15 nov, N): Terminar Coanda (Frente 1).**\n- **Frente 1 — Prueba:** portafolio en línea para el 14 de diciembre.\n'
+
+test('language, from the goals file: a Spanish file with no setting gives a Spanish band', async ($, on) => {
+  const { ui } = await bandOver($, on, READY_AT({ [GOALS_PATH]: SPANISH }))
+
+  expect(await texts(ui)).toContain('CONFIGURA TUS OBJETIVOS')
+  expect(await texts(ui)).toContain('Objetivo    Terminar Coanda')
+  expect(await texts(ui)).toContain('Frente 1  Prueba: portafolio en línea · para el 14 dic')
+  expect(await withoutLamp(ui)).toEqual(['Se ve bien', 'Cambiar', 'Omitir por ahora'])
+  await ui.unmount()
+})
+
+test('language: the Claude Code setting wins over the language of the goals file', async ($, on) => {
+  const { ui } = await bandOver($, on, READY_AT({ [GOALS_PATH]: SPANISH, [SETTINGS]: '{"language":"English"}' }))
+
+  expect(await texts(ui)).toContain('SET UP YOUR GOALS')
+  expect(await texts(ui)).toContain('Goal    Terminar Coanda')
+  await ui.unmount()
+})
+
+test('language, from the system: LANG gives Chinese when nothing else says', async ($, on) => {
+  const { ui } = await bandOver($, on, READY_AT({}, { HOME: '/home/n', LANG: 'zh_CN.UTF-8' }))
+
+  expect(await texts(ui)).toContain('设置你的目标')
+  expect(await withoutLamp(ui)).toEqual(['让 Claude 帮我设置', '帮我找出来', '暂时跳过'])
+  await ui.unmount()
+})
+
+test('language: an English goals file keeps English whatever LANG says', async ($, on) => {
+  const { ui } = await bandOver($, on, READY_AT({ [GOALS_PATH]: GOALS_TEXT }, { HOME: '/home/n', LANG: 'fr_FR.UTF-8' }))
+
+  expect(await texts(ui)).toContain('SET UP YOUR GOALS')
+  await ui.unmount()
+})
+
+test('language: a Chinese goals file shows its Primary, and the KPI page lines up its columns in cells', async ($, on) => {
+  const file = '/data/goals.md'
+  const { ui } = await bandOver($, on, {
+    setup: SETUP_FILE(file),
+    files: { [file]: '## 今天\n- **首要事项（11月15日）：完成 Coanda（主线 1）。**\n- **主线 1 — 验证：** 作品集在12月14日前上线。\n', [SETTINGS]: '{"language":"zh-CN"}' },
+    env: { HOME: '/home/n' },
+  })
+
+  expect(await primaryOf(ui)).toBe('◎ 完成 Coanda')
+  await $.command.run({ command: 'coanda-kpi' } as never)
+  expect(await texts(ui)).toContain('指标 · 按会话 · 当前：面板开启')
+  expect(await texts(ui)).toMatch(/纠正次数 \/ 会话\s+—\s+0\.0/)
+  // The "on" column starts at the same cell on every line, though each Chinese character takes two.
+  const cells = (text: string) => [...text].reduce((n, ch) => n + (ch.charCodeAt(0) > 0x2e80 ? 2 : 1), 0)
+  const starts = (await texts(ui)).split('\n').filter(line => /^(纠正次数 \/|被打断|返工|回合|决策)/.test(line)).map(line => cells(line.slice(0, line.search(/(0\.0|—)\s*$/))))
+  expect(starts).toHaveLength(5)
+  expect(new Set(starts).size).toBe(1)
+  setLang('en')
+  await ui.unmount()
+})
+
+// ---- Row budget in the other languages: French and Chinese lines are longer or wider than English ----
+
+async function budgetIn(language: string, words: { q2: string; o2: string[]; q3: string; o3: string[] }, $: Parameters<TestBody>[0], on: Parameters<TestBody>[1]) {
+  const goals = '## Today\n- **Primary (14 Nov, N): Ship the v0.1 install (Lane 1).**\n- **Lane 1 — Install:** portfolio live by 14 Dec.\n'
+  const { ui } = await bandOver($, on, { setup: SETUP_FILE('/data/goals.md'), files: { '/data/goals.md': goals, [SETTINGS]: `{"language":"${language}"}` }, env: { HOME: '/home/n' } })
+  const over: string[] = []
+  const check = async (name: string) => void over.push(...overRows(name, await ui.drawn()))
+
+  await check('resting')
+  await ui.press({ key: 'primary-details' })
+  await check('resting, Details open')
+  await ui.press({ key: 'primary-details' })
+
+  await ask($, words.q2, words.o2)
+  await check('question, 2 options with consequences')
+  await ui.press({ key: (await keyOf(ui, (await buttonsOf(ui)).at(-1)!))! })
+
+  await ask($, words.q3, words.o3, { hard_to_undo: true, facts: ['a', 'b'], could_be_wrong_if: 'x' })
+  await check('question, 3 options with consequences, hard to undo')
+  expect(over).toEqual([])
+  await ui.unmount()
+}
+
+test('row budget in French: resting, Details and the questions fit as in English', async ($, on) => {
+  await budgetIn('French', { q2: 'Renommer fill2 en fillSafely ?', o2: ['Renommer', 'Garder'], q3: 'Bandeau ou panneau pour les questions ?', o3: ['Le bandeau', 'Le panneau', 'Les deux'] }, $, on)
+})
+
+test('row budget in Chinese: resting, Details and the questions fit as in English', async ($, on) => {
+  await budgetIn('Chinese', { q2: '把 fill2 重命名为 fillSafely 吗？', o2: ['重命名', '保持不变'], q3: '问题放在面板里还是单独的面板里？', o3: ['放在面板里', '单独的面板', '两者都要'] }, $, on)
+})
+
+// ---- /coanda-language: the person's own choice wins ----------------------------------------------
+
+test('/coanda-language: the choice is saved, wins over the setting and the file, and "auto" gives it back', async ($, on) => {
+  const { ui, saved, commands } = await bandOver($, on, READY_AT({ [SETTINGS]: '{"language":"Spanish"}', [GOALS_PATH]: GOALS_TEXT }))
+  const run = async (args?: string) => (await $.command.run({ command: 'coanda-language', args: args ?? '' } as never)) as unknown as { text: string }
+
+  expect(commands).toContain('coanda-language')
+  expect(await texts(ui)).toContain('CONFIGURA TUS OBJETIVOS')
+
+  // The choice wins over the Claude Code setting (Spanish) and the English goals file; the answer and the band change at once.
+  expect((await run('fr')).text).toBe('Langue : Français. Elle l’emporte sur les autres sources ; /coanda-language auto y revient.')
+  expect(saved.language).toEqual({ v: 1, lang: 'fr' })
+  expect(await texts(ui)).toContain('CONFIGURE TES OBJECTIFS')
+  expect((await run()).text).toBe('Langue actuelle : Français. Utilise /coanda-language en, fr, es, zh ou auto.')
+
+  // Names work as well as codes; a name that is none of the four changes nothing.
+  expect((await run('Chinese')).text).toContain('语言：中文（简体）')
+  expect(saved.language).toEqual({ v: 1, lang: 'zh' })
+  expect((await run('Klingon')).text).toBe('未知的语言“Klingon”。请使用 en、fr、es、zh 或 auto。')
+  expect(saved.language).toEqual({ v: 1, lang: 'zh' })
+
+  // "auto" forgets the choice: back to the setting, which says Spanish.
+  expect((await run('auto')).text).toBe('Idioma: automático (Español), según el ajuste de Claude Code, luego tu archivo de objetivos, luego LANG.')
+  expect(saved.language).toBeUndefined()
+  expect(await texts(ui)).toContain('CONFIGURA TUS OBJETIVOS')
+  await ui.unmount()
+})
+
+test('/coanda-language: a choice saved earlier is used in a new session, ahead of LANG', async ($, on) => {
+  const { ui } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n', LANG: 'es_ES.UTF-8' }, docs: { language: { v: 1, lang: 'zh' } } })
+
+  expect(await texts(ui)).toContain('设置你的目标')
   await ui.unmount()
 })

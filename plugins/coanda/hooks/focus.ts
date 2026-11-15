@@ -1,4 +1,6 @@
 import type { FocusResult, Lane, Setup } from '../types'
+import { formatDay, t } from './i18n'
+import { BY_TEXT, BY_TEXT_ZH, CLOSED, DATE_LIKE, LANE, PRIMARY, TODAY, findEndDate } from './lexicon'
 import { dayKey } from './time'
 
 // What the Focus source says (spine AD-5): one FocusResult, made by one of two parsers.
@@ -7,6 +9,8 @@ import { dayKey } from './time'
 //   plain     any other file: the first non-empty line is the Primary, and there are no Lanes.
 // Neither throws. The words "no Primary set" or "not readable" are drawn from `status`
 // (primaryText), never stored as Primary text.
+// The words of the format (Today, Primary, Lane, CLOSED, by) and the dates are read in English, French,
+// Spanish and Simplified Chinese (lexicon.ts); a file may mix them.
 export const NO_FOCUS: FocusResult = { status: 'none', primary: '', laneId: '', lanes: [] }
 // A file that could not be read: said in plain words in its row, never an exception.
 export const UNREADABLE_FOCUS: FocusResult = { status: 'unreadable', primary: '', laneId: '', lanes: [] }
@@ -14,7 +18,8 @@ export const UNREADABLE_FOCUS: FocusResult = { status: 'unreadable', primary: ''
 const MAX_PRIMARY = 200
 const MAX_LANE = 60
 
-const isClosed = (line: string): boolean => /\bCLOSED\b/.test(line)
+const CLOSED_AT = new RegExp(CLOSED, 'u')
+const isClosed = (line: string): boolean => CLOSED_AT.test(line)
 
 const clip = (text: string, max: number): string => {
   const one = text.trim().replace(/\s+/g, ' ')
@@ -30,8 +35,6 @@ export function focusSourceOf(setup: unknown): string | null {
 
   return typeof path === 'string' && path.startsWith('/') ? path : null
 }
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 const isRealDay = (year: number, month: number, day: number): boolean => {
   const made = new Date(Date.UTC(year, month, day))
@@ -57,36 +60,21 @@ function dayOfFile(day: number, month: number, year: number | null, now: number 
   return near === undefined ? null : dayText(near, month, day)
 }
 
-// A month written out or abbreviated ("Oct", "sept", "October"); any other word is not a month.
-const MONTH_WORD = /^(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)$/i
-const monthOf = (word: string): number => (MONTH_WORD.test(word) ? MONTHS.findIndex(one => one.toLowerCase() === word.slice(0, 3).toLowerCase()) : -1)
-
-// "21 Sep → 14 Dec" and "by Sun 18 Oct" are an end date; "by Q1" or "by 31 Feb" is an end that cannot be
-// read as a day and is kept as text. The date is taken out of the outcome, so the row says it once.
-// Both patterns are global: the first match whose words are really a month wins, so "by 3 weeks, by 18 Oct" finds 18 Oct.
-const RANGE = /,?\s*(\d{1,2})\s+([a-z]{3,9})\.?(?:\s+\d{4})?\s*(?:→|->|–|—)\s*(\d{1,2})\s+([a-z]{3,9})\.?(?:\s+(\d{4}))?/gi
-const BY = /,?\s*\bby\s+(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?,?\s+)?(\d{1,2})\s+([a-z]{3,9})\.?(?:\s+(\d{4}))?/gi
-// A "by …" tail that is not a day but still reads as a date: "by Q1", "by end of March", "by 2027", "by 3/12".
-const DATE_LIKE = /^(?:q[1-4](?:\s+\d{4})?|(?:end|start|mid)[ -]of\s+.+|\d{4}|\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?)$/i
-const BY_TEXT = /,?\s*\bby\s+([^,;]+)$/i
-
+// "21 Sep → 14 Dec" and "by Sun 18 Oct" (also "d'ici le 14 déc.", "para el 14 de diciembre", "12月14日前") are an end
+// date; "by Q1" or "by 31 Feb" is an end that cannot be read as a day and is kept as text. The date is taken out of
+// the outcome, so the row says it once. The first match whose words are really a month wins, so "by 3 weeks, by 18 Oct"
+// finds 18 Oct.
 function endOfClause(clause: string, now: number | undefined): { rest: string; end: Pick<Lane, 'endDay' | 'endText'> } {
-  // [pattern, group of the end day, group of its month word, group of its year, group of the start month word (ranges)]
-  for (const [pattern, dayAt, wordAt, yearAt, startAt] of [[RANGE, 3, 4, 5, 2], [BY, 1, 2, 3, 0]] as const) {
-    for (const found of clause.matchAll(pattern)) {
-      const month = monthOf(found[wordAt]!)
-      if (month < 0 || (startAt > 0 && monthOf(found[startAt]!) < 0)) continue
+  const found = findEndDate(clause)
 
-      const day = Number(found[dayAt])
-      const year = found[yearAt]
-      const iso = dayOfFile(day, month, year === undefined ? null : Number(year), now)
-      const text = `${day} ${MONTHS[month]}${year === undefined ? '' : ` ${year}`}`
+  if (found !== null) {
+    const iso = dayOfFile(found.day, found.month, found.year, now)
+    const text = formatDay(found.day, found.month, found.year)
 
-      return { rest: clause.replace(found[0], ''), end: iso === null ? { endText: text } : { endDay: iso } }
-    }
+    return { rest: clause.replace(found.text, ''), end: iso === null ? { endText: text } : { endDay: iso } }
   }
 
-  const tail = clause.match(BY_TEXT)
+  const tail = clause.match(BY_TEXT) ?? clause.match(BY_TEXT_ZH)
 
   return tail !== null && DATE_LIKE.test(tail[1]!.trim())
     ? { rest: clause.replace(tail[0], ''), end: { endText: clip(tail[1]!, 30) } }
@@ -95,16 +83,18 @@ function endOfClause(clause: string, now: number | undefined): { rest: string; e
 
 // `**Lane 2 — Proof:** portfolio MVP live by Sun 18 Oct. More.` becomes the Lane
 // "Proof: portfolio MVP live", ending 18 Oct.
+const LANE_LINE = new RegExp(String.raw`\*\*\s*${LANE}\s*(\d+)\s*[—–-]+\s*(.+?)\s*(?:[:：]\*\*|\*\*\s*[:：])\s*(.*)$`, 'u')
+
 function lanesOf(text: string, now: number | undefined): Lane[] {
   const lanes: Lane[] = []
 
   for (const line of text.split('\n')) {
-    const found = line.match(/\*\*Lane\s+(\d+)\s*[—–-]\s*(.+?):\*\*\s*(.*)$/)
+    const found = line.match(LANE_LINE)
     if (found === null) continue
 
     const name = found[2]!.replace(/\s*\([^)]*\)\s*$/, '').trim()
-    const { rest, end } = endOfClause(found[3]!.split(/[.;](?:\s|$)/)[0]!.trim(), now)
-    const clause = rest.trim().replace(/[\s,:;-]+$/, '')
+    const { rest, end } = endOfClause(found[3]!.split(/[.;](?:\s|$)|[。；]/)[0]!.trim(), now)
+    const clause = rest.trim().replace(/[\s,，:：;；、-]+$/, '')
 
     lanes.push({ id: `lane-${found[1]}`, outcome: clip(clause ? `${name}: ${clause}` : name, MAX_LANE), ...end })
   }
@@ -112,28 +102,36 @@ function lanesOf(text: string, now: number | undefined): Lane[] {
   return lanes
 }
 
+const TODAY_START = new RegExp(`^${TODAY}`, 'iu')
+const PRIMARY_MARK = new RegExp(String.raw`\*\*\s*${PRIMARY}`, 'iu')
+const PRIMARY_BOLD = new RegExp(String.raw`\*\*\s*${PRIMARY}(?:\s*[(（][^)）]*[)）])?\s*[:：]\s*(.*?)\*\*`, 'iu')
+const PRIMARY_LEAD = new RegExp(String.raw`^[-\s*]*${PRIMARY}[^:：]*[:：]\s*`, 'iu')
+const LANE_TAIL = new RegExp(String.raw`\s*[(（]\s*${LANE}[^)）]*[)）][.。]?$`, 'iu')
+const LANE_REF = new RegExp(String.raw`${LANE}\s*(\d+)`, 'iu')
+const CLOSED_TIME = new RegExp(String.raw`${CLOSED}[^\n]*?(\d{1,2}[:：]\d{2})`, 'u')
+
 export function parseFocusMd(text: string, now?: number): FocusResult {
   const lanes = lanesOf(text, now)
-  const today = text.split(/^## /m).find(part => part.startsWith('Today'))
-  const line = today?.split('\n').find(one => one.includes('**Primary'))
+  const today = text.split(/^## /m).find(part => TODAY_START.test(part))
+  const line = today?.split('\n').find(one => PRIMARY_MARK.test(one))
 
   if (line === undefined) return { ...NO_FOCUS, lanes }
 
   // A line marked CLOSED ("CLOSED 28 Oct 12:44") means there is no Primary until a new one is set.
   if (isClosed(line)) {
-    const time = line.match(/\bCLOSED\b\s+(?:\d{1,2}\s+\w+\s+)?(\d{1,2}:\d{2})/)?.[1]
+    const time = line.match(CLOSED_TIME)?.[1]?.replace('：', ':')
 
     return { status: 'closed', primary: '', laneId: '', lanes, ...(time === undefined ? {} : { closedAt: time }) }
   }
 
   // The label ends at "): " (it may hold a time, "switch 17:08"), or at the first colon when it has no brackets.
-  const bold = line.match(/\*\*Primary(?:\s*\([^)]*\))?:\s*(.*?)\*\*/)
-  const raw = bold?.[1] ?? line.replace(/^[-\s*]*Primary[^:]*:\s*/, '')
-  const primary = clip(raw.replace(/\s*\(Lane[^)]*\)\.?$/, ''), MAX_PRIMARY)
+  const bold = line.match(PRIMARY_BOLD)
+  const raw = bold?.[1] ?? line.replace(PRIMARY_LEAD, '')
+  const primary = clip(raw.replace(LANE_TAIL, ''), MAX_PRIMARY)
 
   if (primary === '') return { ...NO_FOCUS, lanes }
 
-  const lane = line.match(/\bLane\s+(\d+)/)?.[1]
+  const lane = line.match(LANE_REF)?.[1]
 
   return { status: 'ok', primary, laneId: lane === undefined ? '' : `lane-${lane}`, lanes }
 }
@@ -145,27 +143,32 @@ export function parsePlain(text: string): FocusResult {
 }
 
 // The parser is picked by the file: a `## Today` heading means focus-md.
-export const parseFocus = (text: string, now?: number): FocusResult => (/^## Today\b/m.test(text) ? parseFocusMd(text, now) : parsePlain(text))
+const TODAY_HEADING = new RegExp(`^## ${TODAY}`, 'imu')
+export const parseFocus = (text: string, now?: number): FocusResult => (TODAY_HEADING.test(text) ? parseFocusMd(text, now) : parsePlain(text))
 
-// The Primary's head, short enough for one row: up to the first comma, bracket or dash.
+// The Primary's head, short enough for one row: up to the first comma, bracket or dash. Chinese characters are
+// twice as wide as letters, so a Chinese head gets half the length.
 export function shortPrimary(primary: string, max = 60): string {
-  const head = primary.split(/,|\s\(|\s—\s/)[0]!.trim()
-  if (head.length <= max) return head
+  const head = primary.split(/[,，、；]|\s\(|（|\s—\s|——/)[0]!.trim()
+  const limit = /[\u3400-\u9fff]/u.test(head) ? Math.ceil(max / 2) : max
+  if (head.length <= limit) return head
 
-  return `${head.slice(0, head.lastIndexOf(' ', max)).trim()}…`
+  const space = head.lastIndexOf(' ', limit)
+
+  return `${head.slice(0, space > 0 ? space : limit).trim()}…`
 }
 
 // What the Primary row says, drawn from the status.
 export function primaryText(focus: FocusResult): string {
   switch (focus.status) {
     case 'ok':
-      return shortPrimary(focus.primary) || 'no Primary set'
+      return shortPrimary(focus.primary) || t('primary.none')
     case 'closed':
-      return focus.closedAt === undefined ? 'Closed · no Primary set' : `Closed ${focus.closedAt} · no Primary set`
+      return focus.closedAt === undefined ? t('primary.closed') : t('primary.closedAt', { time: focus.closedAt })
     case 'unreadable':
-      return 'Focus file not readable'
+      return t('primary.unreadable')
     case 'none':
-      return 'no Primary set'
+      return t('primary.none')
   }
 }
 
@@ -176,12 +179,12 @@ export function endLabel(lane: Lane, now?: number): string {
   const [y, m, d] = (typeof lane.endDay === 'string' ? lane.endDay : '').split('-').map(Number)
   if (typeof lane.endDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(lane.endDay) && isRealDay(y!, m! - 1, d!)) {
     const [year, month, day] = lane.endDay.split('-').map(Number) as [number, number, number]
-    const shown = `${day} ${MONTHS[month - 1]}${now !== undefined && year !== new Date(now).getFullYear() ? ` ${year}` : ''}`
+    const shown = formatDay(day, month - 1, now !== undefined && year !== new Date(now).getFullYear() ? year : null)
 
-    return `by ${shown}${now !== undefined && lane.endDay < dayKey(now) ? ' · past' : ''}`
+    return `${t('lane.by', { date: shown })}${now !== undefined && lane.endDay < dayKey(now) ? t('lane.past') : ''}`
   }
 
-  return typeof lane.endText === 'string' && lane.endText !== '' ? `by ${lane.endText}` : ''
+  return typeof lane.endText === 'string' && lane.endText !== '' ? t('lane.byText', { text: lane.endText }) : ''
 }
 
 // The outcome of the Primary's Lane with its end date; empty when it has none or the id matches no Lane

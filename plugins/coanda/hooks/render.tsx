@@ -3,6 +3,7 @@ import type { ElementTable } from 'claude-code'
 import type { BandAction, BandButton, BandInput, BandModel, BandRow } from '../types'
 import { ABOVE_PRIMARY, AFTER_HEADING, INSET, ruleItem, placeScreen } from './layout'
 import type { Placed } from './layout'
+import { stampOf, t } from './i18n'
 
 export type Draw = {
   // The surface's elements, resolved by register.tsx.
@@ -43,7 +44,6 @@ const STEP_FIELD = 65
 // The breathing circle (box breathing: in 4 s, hold 4 s, out 4 s, hold 4 s = 16 s). One Dusk circle,
 // CSS keyframes inside the SVG (the way the lamp animates, which the host draws); the caption is a fixed
 // native Text, since words cannot change without a script. Reduced motion holds it still at mid size.
-export const BREATHE_CAPTION = 'one breath while you wait, or ignore it'
 export const BREATHE_SECONDS = 16
 export const BREATHE_SVG =
   `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">` +
@@ -156,9 +156,9 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
               {first !== undefined && <Box flexShrink={1} minWidth={0}>{firstLine(r, first)}</Box>}
               {r.breathe === true && Svg !== undefined && (
                 <Box key="breathe" flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
-                  <Svg source={BREATHE_SVG} alt="A circle that grows and shrinks slowly, a breathing guide" width={28} height={28} isInteractive />
+                  <Svg source={BREATHE_SVG} alt={t('breathe.alt')} width={28} height={28} isInteractive />
                   <Text size="caption" color={MUTED}>
-                    {BREATHE_CAPTION}
+                    {t('breathe.caption')}
                   </Text>
                 </Box>
               )}
@@ -172,7 +172,7 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
               {r.source !== undefined && (
                 <Box flexShrink={0}>
                   <Text size="caption" mono color={WARN}>
-                    {r.source}
+                    {stampOf(r.source)}
                   </Text>
                 </Box>
               )}
@@ -281,14 +281,14 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
               {first !== undefined && <Box flexShrink={1} minWidth={0}>{firstLine(r, first)}</Box>}
               {r.breathe === true && Svg !== undefined && (
                 <Box key="breathe" flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
-                  <Svg source={BREATHE_SVG} alt="A circle that grows and shrinks slowly, a breathing guide" width={28} height={28} isInteractive />
+                  <Svg source={BREATHE_SVG} alt={t('breathe.alt')} width={28} height={28} isInteractive />
                   <Text size="caption" color={MUTED}>
-                    {BREATHE_CAPTION}
+                    {t('breathe.caption')}
                   </Text>
                 </Box>
               )}
               {chip !== undefined && <Box flexShrink={0}><Text color={RISK}>{`⚠ ${chip}`}</Text></Box>}
-              {r.source !== undefined && <Box flexShrink={0}><Text mono color={WARN}>{r.source}</Text></Box>}
+              {r.source !== undefined && <Box flexShrink={0}><Text mono color={WARN}>{stampOf(r.source)}</Text></Box>}
             </Box>
           ),
         })

@@ -216,7 +216,7 @@ export type BandRow = {
   text: string[]
   note?: string // one quiet muted line beside the row's quiet link (the stand-up nudge)
   source?: Exclude<LineSource, 'tool'> | 'stale'
-  chip?: 'Hard to undo'
+  chip?: string
   // Working only: show the breathing circle and its caption beside the line.
   breathe?: true
   fieldNote?: string // a short muted line under a field (the shutdown question's refusal)

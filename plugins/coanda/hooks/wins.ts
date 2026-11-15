@@ -1,4 +1,5 @@
 import type { DayWins, Step, Win } from '../types'
+import { dayHeading, t, tn } from './i18n'
 import { BOOKKEEPING } from './plan'
 import { dayKey } from './time'
 
@@ -33,7 +34,7 @@ export function commitText(command: string): string | null {
   const direct = quoted?.[1] ?? quoted?.[2] ?? ''
   const first = ((direct.startsWith('$(') ? heredoc?.[2] : direct) ?? heredoc?.[2] ?? '').split('\n')[0]!.replace(/\s+/g, ' ').trim().slice(0, 70)
 
-  return first === '' ? 'Commit' : first
+  return first === '' ? t('wins.commit') : first
 }
 
 // Adds wins to today's record; the same words are one win. Only the newest MAX_WINS are kept.
@@ -54,25 +55,22 @@ export function isDue(doc: DayWins | null | undefined, now: number): boolean {
   return today.open || d.getHours() * 60 + d.getMinutes() >= OFFER_FROM
 }
 
-export const headline = (n: number): string => `${n} ${n === 1 ? 'thing' : 'things'} moved today`
+export const headline = (n: number): string => tn('wins.headline', n)
 
 // The chips: up to MAX_CHIPS wins, then "+N more".
 export function chipsOf(items: Win[]): string[] {
   const shown = items.slice(0, MAX_CHIPS).map(w => w.text)
 
-  return items.length > MAX_CHIPS ? [...shown, `+${items.length - MAX_CHIPS} more`] : shown
+  return items.length > MAX_CHIPS ? [...shown, t('wins.more', { n: items.length - MAX_CHIPS })] : shown
 }
-
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 // The dated block for the journal, newest day first in the file (like the other journal files).
 export function journalBlock(doc: DayWins): string {
   const [y, m, d] = doc.day.split('-').map(Number) as [number, number, number]
   const date = new Date(y, m - 1, d)
-  const lines = doc.items.map(w => `- ${w.kind === 'commit' ? 'Commit: ' : ''}${w.text}`)
+  const lines = doc.items.map(w => `- ${w.kind === 'commit' ? t('wins.commitLabel') : ''}${w.text}`)
 
-  return [`## ${DAYS[date.getDay()]} ${d} ${MONTHS[m - 1]}`, `- Date: ${doc.day}`, `- ${headline(doc.items.length)}`, ...lines, ''].join('\n')
+  return [`## ${dayHeading(date)}`, t('wins.dateLine', { day: doc.day }), `- ${headline(doc.items.length)}`, ...lines, ''].join('\n')
 }
 
 export const journalFile = (day: string): string => `wins-${day.slice(0, 7)}.md`
@@ -82,8 +80,10 @@ export const journalFile = (day: string): string => `wins-${day.slice(0, 7)}.md`
 export function mergeJournal(existing: string, doc: DayWins): string {
   const block = journalBlock(doc)
   const [head, ...blocks] = existing.split(/^(?=## )/m)
-  const title = head!.trim() === '' || head!.startsWith('## ') ? `# Wins ${doc.day.slice(0, 7)}\n\n` : head!
-  const rest = (head!.startsWith('## ') ? [head!, ...blocks] : blocks).filter(b => !b.includes(`- Date: ${doc.day}\n`))
+  const title = head!.trim() === '' || head!.startsWith('## ') ? `# ${t('wins.title', { month: doc.day.slice(0, 7) })}\n\n` : head!
+  // A block of this day is found by its date line, whatever language wrote it ("- Date: …", "- Fecha: …", "- 日期：…").
+  const isThisDay = (b: string): boolean => new RegExp(`^- [^\\n:：]+[:：] ?${doc.day}$`, 'm').test(b)
+  const rest = (head!.startsWith('## ') ? [head!, ...blocks] : blocks).filter(b => !isThisDay(b))
 
   return `${title.endsWith('\n\n') ? title : `${title.trimEnd()}\n\n`}${[block, ...rest.map(b => (b.endsWith('\n') ? b : `${b}\n`))].join('\n')}`
 }

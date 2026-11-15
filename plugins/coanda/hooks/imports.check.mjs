@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 
 // Pure files: no host calls, no clock, no files.
-const CORE = ['band', 'focus', 'idle', 'time', 'cards', 'plan', 'next', 'question', 'line', 'goals-ask', 'standup', 'shutdown', 'wins', 'kpi']
+const CORE = ['band', 'focus', 'idle', 'time', 'cards', 'plan', 'next', 'question', 'line', 'goals-ask', 'standup', 'shutdown', 'wins', 'kpi', 'i18n', 'words', 'lexicon']
 const SHELL = ['register', 'render', 'grid', 'lab', 'lab-client', 'light', 'stage', 'lamp', 'state', 'store', 'io', 'model', 'demo-run', 'kpi-view']
 
 const sources = Object.fromEntries(
@@ -80,7 +80,7 @@ check('render.tsx reads no state, no file and no setting, and decides nothing', 
   ...importsOf(sources.render ?? '').flatMap(one => {
     if (one.from.startsWith('claude-code')) return one.isType ? [] : [`render: imports a value from '${one.from}'`]
 
-    return one.from === '../types' || one.from === './line' ? [] : [`render: imports '${one.from}'`]
+    return one.from === '../types' || one.from === './line' || one.from === './i18n' ? [] : [`render: imports '${one.from}'`]
   }),
   ...(/\$\s*\.\s*\w/.test(sources.render ?? '') ? ['render: calls the host ($.…)'] : []),
 ])
@@ -97,11 +97,11 @@ check(
   hooksFiles(here).flatMap(path => MACHINE.filter(word => readFileSync(path, 'utf8').includes(word)).map(word => `${relative(here, path)}: contains ${word}`)),
 )
 check(
-  'only HOME and CLAUDE_CONFIG_DIR are read from the environment, each spelled out',
+  'only HOME, CLAUDE_CONFIG_DIR and the locale (LC_ALL, LC_MESSAGES, LANG) are read from the environment, each spelled out',
   Object.entries(sources).flatMap(([file, text]) => [
     ...[...text.matchAll(/\$\.env\.(?:get|set)\(\s*([^)]*?)\s*\)/g)]
       .map(m => m[1])
-      .filter(arg => arg !== "'HOME'" && arg !== "'CLAUDE_CONFIG_DIR'")
+      .filter(arg => !["'HOME'", "'CLAUDE_CONFIG_DIR'", "'LC_ALL'", "'LC_MESSAGES'", "'LANG'"].includes(arg))
       .map(arg => `${file}: reads the environment with ${arg}`),
     ...(/\$\.env\.set/.test(text) ? [`${file}: sets an environment variable`] : []),
   ]),

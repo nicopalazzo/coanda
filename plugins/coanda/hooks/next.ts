@@ -1,7 +1,9 @@
 import type { Asked, Card, Moment, Suggestion } from '../types'
 import { isOpen } from './cards'
+import { languageName, currentLang } from './i18n'
+import { OWN } from './lexicon'
 
-export const NEXT_SYSTEM =
+const NEXT_BASE =
   'You read the last exchange between a user and an AI assistant and say where the work stands. ' +
   'Reply with only a JSON object {"moment": "start" | "question" | "other", "question": string, "done": string, "next": string, "suggestions": [...]}. ' +
   '"done": what this reply says was achieved, the outcome not the bookkeeping (never saving notes or running checks), at most 8 words ("" if nothing). ' +
@@ -13,7 +15,12 @@ export const NEXT_SYSTEM =
   '"label" at most 4 words and under 26 characters, "prompt" the exact reply in the first person, one sentence. ' +
   'Each answer names a choice, never a plain approval ("go", "ok", "yes", "done"). Leave out "Something else" and "Later": the user types their own answer, and a quiet "Later" exists already. For "start" and "other", "question" is "" and "suggestions" is [].'
 
-const OWN = /^(something else|other|later|skip|go|ok|okay|yes|done)\.?$/i
+// The model writes the question, the done line, the next step and the answers in the person's language.
+export const nextSystem = (): string =>
+  currentLang() === 'en'
+    ? NEXT_BASE
+    : `${NEXT_BASE} Write "question", "done", "next" and every "label" and "prompt" in ${languageName(currentLang())}, the language of the conversation, and count the word limits in that language's own words.`
+export const NEXT_SYSTEM = NEXT_BASE
 
 const shortLabel = (s: string) => {
   const w = s.replace(/\s+/g, ' ').trim()

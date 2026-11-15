@@ -1,4 +1,5 @@
 import type { ShutdownDoc } from '../types'
+import { t } from './i18n'
 import { dayKey } from './time'
 
 // The shutdown question (Cal Newport's ritual: write the open loop down so it stops pulling at the
@@ -9,6 +10,7 @@ export const SHUTDOWN_MINUTE = 30
 
 // The placeholder when today has no Primary.
 export const SHUTDOWN_FALLBACK = 'Answer R4 of the CEO review'
+export const shutdownFallback = (): string => t('shutdown.fallback')
 
 const isAfterHour = (now: number): boolean => {
   const d = new Date(now)
@@ -40,5 +42,5 @@ export function carriedStep(now: number, doc: ShutdownDoc | null): string {
 export function checkShutdown(text: string): { ok: true; value: string } | { ok: false; message: string } {
   const value = text.replace(/\s+/g, ' ').trim().slice(0, 120)
 
-  return value === '' ? { ok: false, message: 'Write one step first, or skip.' } : { ok: true, value }
+  return value === '' ? { ok: false, message: t('shutdown.empty') } : { ok: true, value }
 }

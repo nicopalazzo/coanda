@@ -1,12 +1,13 @@
 import type { BandButton, BandModel, BandRow, Card, Lane, Snapshot } from '../types'
 import { MAX_LANES, endLabel, goalsState, laneText, primaryText } from './focus'
+import { joinAnd, t, tn } from './i18n'
 import { idleStage } from './idle'
 import { questionToShow } from './next'
 import { proposalLane } from './goals-ask'
 import type { GoalsAsk } from './goals-ask'
 import { nudgeShows, nudgeText } from './standup'
 import { currentStep, lastOutcomeStep } from './plan'
-import { SHUTDOWN_FALLBACK, carriedStep, shutdownDue } from './shutdown'
+import { carriedStep, shutdownDue, shutdownFallback } from './shutdown'
 import { chipsOf, headline, isDue, winsOf } from './wins'
 
 // The one function that decides what the band shows. Rebuilt 13 Nov 2026 from the v3 display rules
@@ -14,7 +15,7 @@ import { chipsOf, headline, isDue, winsOf } from './wins'
 // answer, one quiet exit, a budget. Every button is data: a key, a label and the action dispatch()
 // in register.tsx carries out. Order: Setup, idle stage, Sent, a question, Working, Resting.
 export function bandModel(s: Snapshot): BandModel {
-  if (s.setup.doneAt === null || s.setupOpen) return { kind: 'setup', heading: SETUP_HEADING, rows: setupRows(s) }
+  if (s.setup.doneAt === null || s.setupOpen) return { kind: 'setup', heading: t('setup.heading'), rows: setupRows(s) }
 
   // A guessed question waits for the turn to end; a decision card shows at once.
   const shown = questionToShow(s.cards, s.sessionId, s.isWorking ? null : s.asked)
@@ -33,18 +34,18 @@ export function bandModel(s: Snapshot): BandModel {
   if (stage === 'primary' && !wanted) return { kind: 'rows', moment: 'quiet', rows: [], primary }
 
   if (s.sent !== null) {
-    const row: BandRow = { part: 'sent', label: 'Sent', text: [`✓ ${s.sent}${s.isWorking ? ' · Claude is working' : ''}`], buttons: [] }
+    const row: BandRow = { part: 'sent', label: t('sent.label'), text: [`✓ ${s.sent}${s.isWorking ? t('sent.working') : ''}`], buttons: [] }
 
     return { kind: 'rows', moment: 'sent', rows: [row], primary }
   }
 
-  if (shown !== null && 'card' in shown) return { kind: 'rows', moment: 'pick', heading: waitingCount(s) > 1 ? `Question · ${waitingCount(s)} waiting` : 'Question', rows: [cardRow(shown.card, waitingCount(s))], primary }
+  if (shown !== null && 'card' in shown) return { kind: 'rows', moment: 'pick', heading: waitingCount(s) > 1 ? t('question.waiting', { n: waitingCount(s) }) : t('question.label'), rows: [cardRow(shown.card, waitingCount(s))], primary }
 
   if (shown !== null) {
     const { asked } = shown
     const row: BandRow = {
       part: 'question',
-      label: 'Question',
+      label: t('question.label'),
       text: [asked.text],
       source: 'inferred',
       buttons: [
@@ -52,24 +53,24 @@ export function bandModel(s: Snapshot): BandModel {
           // As in Intent: the first answer primary, the others secondary.
           (one, i): BandButton => ({ key: `asked-${i}`, label: one.label, variant: i === 0 ? 'primary' : 'secondary', action: { kind: 'send', text: one.prompt, label: one.label } }),
         ),
-        { key: 'asked-dismiss', label: 'Not for me', variant: 'link', action: { kind: 'dismiss' } },
+        { key: 'asked-dismiss', label: t('question.dismiss'), variant: 'link', action: { kind: 'dismiss' } },
       ],
     }
 
-    return { kind: 'rows', moment: 'guessed', heading: 'Question', rows: [row], primary }
+    return { kind: 'rows', moment: 'guessed', heading: t('question.label'), rows: [row], primary }
   }
 
-  if (record) return { kind: 'rows', moment: 'today', heading: 'Today', rows: [todayRow(s)], primary }
+  if (record) return { kind: 'rows', moment: 'today', heading: t('today.label'), rows: [todayRow(s)], primary }
 
   // Past the shutdown hour, once a day, a quiet turn shows the shutdown question in place of NOW.
-  if (!s.isWorking && shutdownDue(s.now, s.shutdown.doc, s.shutdown.forced)) return { kind: 'rows', moment: 'shutdown', heading: 'Shutdown', rows: [shutdownRow(s)], primary }
+  if (!s.isWorking && shutdownDue(s.now, s.shutdown.doc, s.shutdown.forced)) return { kind: 'rows', moment: 'shutdown', heading: t('shutdown.label'), rows: [shutdownRow(s)], primary }
 
   // Working and Resting ask nothing, so with no Primary the band offers to set one: the step "Set your
   // Primary" (heading, field, "Set"), built from Nicolas's canvas of Sat 14 Nov. It is a step that needs
   // the person, so it replaces the status row (band-rebuild-plan.md, D4).
   const now = withNudge(s.isWorking ? workingRow(s) : restingRow(s), s)
   const moment = s.isWorking ? 'working' : 'resting'
-  if (goalOf(s) === '') return { kind: 'rows', moment, heading: 'Set your Primary', rows: [primarySetRow(s)] }
+  if (goalOf(s) === '') return { kind: 'rows', moment, heading: t('primary.heading'), rows: [primarySetRow(s)] }
 
   return { kind: 'rows', moment, rows: [now], primary }
 }
@@ -79,7 +80,7 @@ export function bandModel(s: Snapshot): BandModel {
 function withNudge(row: BandRow, s: Snapshot): BandRow {
   if (!nudgeShows(s.standup, s.now, s.isWorking)) return row
 
-  return { ...row, note: nudgeText(s.standup), buttons: [...row.buttons, { key: 'standup-dismiss', label: 'Not now', variant: 'link', action: { kind: 'standupDismiss' } }] }
+  return { ...row, note: nudgeText(s.standup), buttons: [...row.buttons, { key: 'standup-dismiss', label: t('nudge.dismiss'), variant: 'link', action: { kind: 'standupDismiss' } }] }
 }
 
 // The day record: how many things moved, the wins as chips, one primary button, one quiet exit.
@@ -88,12 +89,12 @@ function todayRow(s: Snapshot): BandRow {
 
   return {
     part: 'today',
-    label: 'Today',
+    label: t('today.label'),
     text: [headline(items.length)],
     chips: chipsOf(items),
     buttons: [
-      { key: 'today-save', label: 'Save to journal', variant: 'primary', action: { kind: 'todaySave' } },
-      { key: 'today-skip', label: 'Not today', variant: 'link', action: { kind: 'todaySkip' } },
+      { key: 'today-save', label: t('today.save'), variant: 'primary', action: { kind: 'todaySave' } },
+      { key: 'today-skip', label: t('today.skip'), variant: 'link', action: { kind: 'todaySkip' } },
     ],
   }
 }
@@ -106,9 +107,9 @@ const waitingCount = (s: Snapshot): number => s.cards.filter(one => one.sessionI
 function cardRow(card: Card, waiting: number): BandRow {
   return {
     part: 'question',
-    label: waiting > 1 ? `Question · ${waiting} waiting` : 'Question',
+    label: waiting > 1 ? t('question.waiting', { n: waiting }) : t('question.label'),
     text: [card.question],
-    ...(card.isHardToUndo ? { chip: 'Hard to undo' as const } : {}),
+    ...(card.isHardToUndo ? { chip: t('question.hard') } : {}),
     ...(card.from === 'tool' ? {} : { source: card.from }),
     buttons: [
       ...card.options.slice(0, 3).map(
@@ -121,7 +122,7 @@ function cardRow(card: Card, waiting: number): BandRow {
           action: { kind: 'pick', card, option: option.label },
         }),
       ),
-      { key: `${card.id}-later`, label: 'Later', variant: 'link', action: { kind: 'later', cardId: card.id } },
+      { key: `${card.id}-later`, label: t('question.later'), variant: 'link', action: { kind: 'later', cardId: card.id } },
     ],
   }
 }
@@ -136,20 +137,20 @@ function shutdownRow(s: Snapshot): BandRow {
 
   return {
     part: 'shutdown',
-    label: 'Shutdown',
-    text: ["What's tomorrow's first step?"],
+    label: t('shutdown.label'),
+    text: [t('shutdown.ask')],
     inputs: [
       {
         key: 'shutdown-input',
         kind: 'text',
         value: s.shutdown.draft,
-        placeholder: goal === '' ? SHUTDOWN_FALLBACK : goal,
-        button: { key: 'shutdown-save', label: 'Save', action: { kind: 'shutdownSave' } },
+        placeholder: goal === '' ? shutdownFallback() : goal,
+        button: { key: 'shutdown-save', label: t('shutdown.save'), action: { kind: 'shutdownSave' } },
         action: { kind: 'shutdownType', value: '' },
       },
     ],
     ...(s.shutdown.note === '' ? {} : { fieldNote: s.shutdown.note }),
-    buttons: [{ key: 'shutdown-skip', label: 'Skip', variant: 'link', action: { kind: 'shutdownSkip' } }],
+    buttons: [{ key: 'shutdown-skip', label: t('shutdown.skip'), variant: 'link', action: { kind: 'shutdownSkip' } }],
   }
 }
 
@@ -157,11 +158,11 @@ function shutdownRow(s: Snapshot): BandRow {
 function workingRow(s: Snapshot): BandRow {
   const steps = s.plan.steps
   const at = currentStep(steps)
-  const text = at < 0 ? 'Working' : `${steps[at]!.content} · step ${at + 1} of ${steps.length}`
+  const text = at < 0 ? t('now.working') : t('now.step', { text: steps[at]!.content, n: at + 1, m: steps.length })
 
   const isLong = s.workingSince !== null && s.now - s.workingSince >= BREATHE_AFTER_MS
 
-  return { part: 'now', label: 'Now', text: [text], ...(isLong ? { breathe: true as const } : {}), buttons: [] }
+  return { part: 'now', label: t('now.label'), text: [text], ...(isLong ? { breathe: true as const } : {}), buttons: [] }
 }
 
 // Resting: one NOW line. A finished task list is a tool fact; the model's "done" is a guess, stamped.
@@ -169,12 +170,12 @@ function restingRow(s: Snapshot): BandRow {
   const steps = s.plan.steps
   const isDone = steps.length > 0 && steps.every(one => one.status === 'completed')
   const fromPlan = isDone ? lastOutcomeStep(steps) : ''
-  if (fromPlan !== '') return { part: 'now', label: 'Now', text: [`Idle · ${fromPlan}`], buttons: [] }
+  if (fromPlan !== '') return { part: 'now', label: t('now.label'), text: [t('now.idleWith', { text: fromPlan })], buttons: [] }
 
   const done = s.reply?.done ?? ''
-  if (done !== '') return { part: 'now', label: 'Now', text: [`Idle · ${done}`], source: 'inferred', buttons: [] }
+  if (done !== '') return { part: 'now', label: t('now.label'), text: [t('now.idleWith', { text: done })], source: 'inferred', buttons: [] }
 
-  return { part: 'now', label: 'Now', text: ['Idle'], buttons: [] }
+  return { part: 'now', label: t('now.label'), text: [t('now.idle')], buttons: [] }
 }
 
 // Today's goal: the goals file's Primary wins; else the one typed in the band (snapshot gives it
@@ -197,8 +198,8 @@ function primarySetRow(s: Snapshot): BandRow {
         key: 'primary-input',
         kind: 'text',
         value: s.setupDraft.primary,
-        placeholder: 'The one thing today…',
-        button: { key: 'primary-set', label: 'Set', action: { kind: 'primarySet' } },
+        placeholder: t('primary.placeholder'),
+        button: { key: 'primary-set', label: t('primary.set'), action: { kind: 'primarySet' } },
         action: { kind: 'setupType', field: 'primary', value: '' },
       },
     ],
@@ -210,7 +211,7 @@ function primarySetRow(s: Snapshot): BandRow {
 const fromLastNight = (s: Snapshot): string[] => {
   const step = carriedStep(s.now, s.shutdown.doc)
 
-  return step === '' ? [] : [`◎ ${step} · first step, from last night`]
+  return step === '' ? [] : [`◎ ${t('primary.fromNight', { step })}`]
 }
 
 // The Primary row shows the goal only; "Details" opens the Lane (rule 6). FocusResult has no
@@ -223,8 +224,8 @@ function primaryRow(s: Snapshot): BandRow {
 
   return {
     part: 'primary',
-    text: [carried, ...(s.detailsOpen ? [lane === '' ? 'No Lane set' : `Lane: ${lane}`] : [])],
-    buttons: [{ key: 'primary-details', label: s.detailsOpen ? 'Less' : 'Details', variant: 'link', action: { kind: 'details' } }],
+    text: [carried, ...(s.detailsOpen ? [lane === '' ? t('primary.noLane') : t('primary.lane', { lane })] : [])],
+    buttons: [{ key: 'primary-details', label: s.detailsOpen ? t('primary.less') : t('primary.details'), variant: 'link', action: { kind: 'details' } }],
   }
 }
 
@@ -262,30 +263,26 @@ export function overBudget(model: BandModel): string[] {
   return (Object.keys(limit) as (keyof typeof limit)[]).filter(k => count[k] > limit[k]).map(k => `${k}: ${count[k]} of at most ${limit[k]}`)
 }
 
-export const SETUP_HEADING = 'Set up your goals'
-
 // The words on one Lane line: "Lane 1  portfolio live · by 14 Dec" (the date as the Primary row says it).
 const laneLine = (lane: Lane, i: number, now: number): string => {
   const end = endLabel(lane, now)
 
-  return `Lane ${i + 1}  ${lane.outcome}${end === '' ? '' : ` · ${end}`}`
+  return `${t('word.lane')} ${i + 1}  ${lane.outcome}${end === '' ? '' : ` · ${end}`}`
 }
 
 // The empty state leads with what the person gets (Nicolas, 14 Nov: the benefit line from onboarding-v1.html).
-export const NOTHING_LINE = 'Your goals, always in view. Claude stays on them.'
-
-const SKIP: BandButton = { key: 'setup-skip', label: 'Skip for now', variant: 'link', action: { kind: 'setupSkip' } }
+const skip = (): BandButton => ({ key: 'setup-skip', label: t('setup.skip'), variant: 'link', action: { kind: 'setupSkip' } })
 const ask = (key: string, label: string, variant: 'primary' | 'secondary', kind: GoalsAsk): BandButton => ({ key, label, variant, action: { kind: 'goalsAsk', ask: kind } })
 
 // "✓ Saved · Goal and 3 Lanes in ~/.claude/goals.md": what the goals file holds, with the home folder as ~.
 export function savedLines(s: Pick<Snapshot, 'focus' | 'goalsPath'>): string[] {
   const hasGoal = s.focus.status === 'ok' && primaryText(s.focus) !== ''
   const lanes = Math.min(s.focus.lanes.length, MAX_LANES)
-  const laneWords = lanes === 0 ? '' : `${lanes} Lane${lanes === 1 ? '' : 's'}`
-  const what = [hasGoal ? 'Goal' : '', laneWords].filter(w => w !== '').join(' and ') || 'Goals'
+  const laneWords = lanes === 0 ? '' : tn('saved.lanes', lanes)
+  const what = joinAnd([hasGoal ? t('saved.goal') : '', laneWords].filter(w => w !== '')) || t('saved.goals')
   const where = s.goalsPath.replace(/^\/(?:Users|home)\/[^/]+/, '~')
 
-  return [`✓ Saved · ${what} in ${where}`, 'When Claude reaches a choice that could take it off these, it shows up here as buttons.']
+  return [t('saved.line', { what, where }), t('saved.hint')]
 }
 
 // The Setup moment (band-rebuild-plan.md section 3, D2, D3): it asks the person nothing; it reads the goals
@@ -295,9 +292,9 @@ function setupRows(s: Snapshot): BandRow[] {
   const state = goalsState(s.focus)
 
   // The confirmation (onboarding-v1.html, success state): what was saved, where, and what Coanda does now.
-  if (s.goalsSaved === 'saved') return [{ part: 'setup', text: savedLines(s), buttons: [{ key: 'setup-done', label: 'Done', variant: 'primary', action: { kind: 'setupDone' } }] }]
+  if (s.goalsSaved === 'saved') return [{ part: 'setup', text: savedLines(s), buttons: [{ key: 'setup-done', label: t('setup.done'), variant: 'primary', action: { kind: 'setupDone' } }] }]
 
-  if (s.goalsAsking) return [{ part: 'setup', text: ['Asking Claude about your goals and Lanes…'], buttons: [SKIP] }]
+  if (s.goalsAsking) return [{ part: 'setup', text: [t('setup.asking')], buttons: [skip()] }]
 
   // State 4: Claude proposes. Stamped inferred; saving is Claude's job (the message it gets writes the file).
   if (s.goalsProposal !== null) {
@@ -306,36 +303,36 @@ function setupRows(s: Snapshot): BandRow[] {
     return [
       {
         part: 'setup',
-        text: [`Goal    ${s.goalsProposal.goal}`, ...s.goalsProposal.lanes.map(proposalLane)],
+        text: [`${t('word.goal')}    ${s.goalsProposal.goal}`, ...s.goalsProposal.lanes.map(proposalLane)],
         source: 'inferred',
-        buttons: [what('proposal-save', 'Save these', 'primary', 'save'), what('proposal-revise', 'Change', 'secondary', 'revise'), what('proposal-drop', 'Not these', 'link', 'drop')],
+        buttons: [what('proposal-save', t('setup.save'), 'primary', 'save'), what('proposal-revise', t('setup.change'), 'secondary', 'revise'), what('proposal-drop', t('setup.drop'), 'link', 'drop')],
       },
     ]
   }
 
   if (state === 'found') {
-    const goal = s.focus.status === 'ok' ? [`Goal    ${primaryText(s.focus)}`] : []
+    const goal = s.focus.status === 'ok' ? [`${t('word.goal')}    ${primaryText(s.focus)}`] : []
     const lanes = s.focus.lanes.slice(0, MAX_LANES).map((lane, i) => laneLine(lane, i, s.now))
 
     return [
       {
         part: 'setup',
         text: [...goal, ...lanes],
-        buttons: [{ key: 'setup-keep', label: 'Looks right', variant: 'primary', action: { kind: 'goalsKeep' } }, ask('setup-change', 'Change', 'secondary', 'change'), SKIP],
+        buttons: [{ key: 'setup-keep', label: t('setup.keep'), variant: 'primary', action: { kind: 'goalsKeep' } }, ask('setup-change', t('setup.change'), 'secondary', 'change'), skip()],
       },
     ]
   }
 
-  if (state === 'unreadable') return [{ part: 'setup', text: [`I couldn't read ${s.goalsPath}.`], buttons: [ask('setup-fix', 'Ask Claude to fix it', 'primary', 'fix'), SKIP] }]
+  if (state === 'unreadable') return [{ part: 'setup', text: [t('setup.unreadable', { path: s.goalsPath })], buttons: [ask('setup-fix', t('setup.fix'), 'primary', 'fix'), skip()] }]
 
   // The demo can also write a goals file of its own in its folder; the person's own files are never written.
-  const demo: BandButton[] = s.demoGoals === undefined ? [] : [{ key: 'demo-file', label: 'Create a demo goals file', variant: 'primary', action: { kind: 'demoFile' } }]
+  const demo: BandButton[] = s.demoGoals === undefined ? [] : [{ key: 'demo-file', label: t('setup.demoFile'), variant: 'primary', action: { kind: 'demoFile' } }]
 
   return [
     {
       part: 'setup',
-      text: [NOTHING_LINE, 'A Goal for today, Lanes for the weeks ahead.'],
-      buttons: [...demo, ask('setup-ask', 'Set up with Claude', demo.length > 0 ? 'secondary' : 'primary', 'setup'), ask('setup-find', 'Find them for me', 'secondary', 'find'), SKIP],
+      text: [t('setup.nothing'), t('setup.nothing2')],
+      buttons: [...demo, ask('setup-ask', t('setup.ask'), demo.length > 0 ? 'secondary' : 'primary', 'setup'), ask('setup-find', t('setup.find'), 'secondary', 'find'), skip()],
     },
   ]
 }

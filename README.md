@@ -37,6 +37,10 @@ Your goals live in a plain text file: `~/.claude/goals.md` (`~` means your home 
 
 To open Setup again at any time, type `/coanda-setup` in the prompt. To see every screen of the band with sample data (your own goals are put aside and restored when you leave), type `/coanda-demo`.
 
+## Language
+
+Coanda speaks English, French, Spanish and Simplified Chinese. Type `/coanda-language fr` (or `es`, `zh`, `en`) in the prompt to choose; your choice is kept and wins over everything else. `/coanda-language auto` hands it back: Coanda then follows the Claude Code `language` setting (terminal), then the language of your goals file, then the system language (`LANG`), and English when none says. Your goals file can be written in any of the four languages; English words always work too.
+
 ## Uninstall
 
 ```bash

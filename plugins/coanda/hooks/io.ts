@@ -3,7 +3,8 @@ import type { EngineInterface } from 'claude-code'
 // Every path and every file read or write of the mod. A path is built from three
 // sources only: the Focus source the person named in setup (stored absolute), the Claude config
 // directory with the home directory, and the plugin's own folder. HOME and CLAUDE_CONFIG_DIR are
-// the only environment names read; they are spelled out because the host lists them.
+// the only environment names read (with LC_ALL, LC_MESSAGES and LANG, for the language: i18n.ts); they are spelled out
+// because the host lists them.
 type Files = Pick<EngineInterface, 'fs'>
 type Places = Pick<EngineInterface, 'env'>
 
@@ -31,6 +32,21 @@ export async function claudeConfigDir($: Places): Promise<string> {
   const set = await $.env.get('CLAUDE_CONFIG_DIR')
 
   return set === undefined || set === '' ? `${await home($)}/.claude` : slashless(set)
+}
+
+// The `language` setting of Claude Code (settings.json in the config directory); undefined when there is none or it
+// cannot be read.
+export async function languageSetting($: Files & Places): Promise<unknown> {
+  try {
+    return (JSON.parse(String(await $.fs.read(`${await claudeConfigDir($)}/settings.json`))) as { language?: unknown }).language
+  } catch {
+    return undefined
+  }
+}
+
+// The system locale variables, in the order they win.
+export async function localeVars($: Places): Promise<(string | undefined)[]> {
+  return [await $.env.get('LC_ALL'), await $.env.get('LC_MESSAGES'), await $.env.get('LANG')]
 }
 
 // The Focus source as text; throws when it cannot be read.
