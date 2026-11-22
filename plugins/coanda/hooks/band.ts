@@ -62,8 +62,8 @@ export function bandModel(s: Snapshot): BandModel {
 
   if (record) return { kind: 'rows', moment: 'today', heading: t('today.label'), rows: [todayRow(s)], primary }
 
-  // Past the shutdown hour, once a day, a quiet turn shows the shutdown question in place of NOW.
-  if (!s.isWorking && shutdownDue(s.now, s.shutdown.doc, s.shutdown.forced)) return { kind: 'rows', moment: 'shutdown', heading: t('shutdown.label'), rows: [shutdownRow(s)], primary }
+  // Once the person ends the day ("Nico out", "shutdown", /coanda-shutdown), a quiet turn shows the shutdown question in place of NOW.
+  if (!s.isWorking && shutdownDue(s.shutdown.forced)) return { kind: 'rows', moment: 'shutdown', heading: t('shutdown.label'), rows: [shutdownRow(s)], primary }
 
   // Working and Resting ask nothing, so with no Primary the band offers to set one: the step "Set your
   // Primary" (heading, field, "Set"), built from Nicolas's canvas of Sat 14 Nov. It is a step that needs

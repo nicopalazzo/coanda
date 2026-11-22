@@ -14,7 +14,7 @@ import { claudeConfigDir } from './io'
 import { parseNext, parseSuggestions, questionToShow, toAsked } from './next'
 import { applyPlan, lastOutcomeStep, noteCall } from './plan'
 import { blankOf } from './question'
-import { SHUTDOWN_FALLBACK, carriedStep, checkShutdown, nextDay, shutdownDue } from './shutdown'
+import { SHUTDOWN_FALLBACK, carriedStep, checkShutdown, isShutdownPhrase, nextDay, shutdownDue } from './shutdown'
 import { clockTime, dayKey } from './time'
 import { BREAK_MS, FAST_CHECK, LONG_MS, NO_STANDUP, RUNS, noteRun, nudgeShows } from './standup'
 import { addWins, chipsOf, commitText, headline, isDue, journalBlock, mergeJournal, newlyCompleted, winsOf } from './wins'
@@ -1760,41 +1760,50 @@ test('stand-up on screen: 3 long runs show the line; "Not now" hides it and the 
   await ui.unmount()
 })
 
-// ---- The shutdown question: after 18:30, once a day, tomorrow's first step ----------------------
+// ---- The shutdown question: only when asked ("Nico out", "shutdown", /coanda-shutdown) -----------
 
 const EVENING = new Date(2026, 10, 14, 18, 30).getTime() // Sat 14 Nov 2026, 18:30 local
 const BEFORE = new Date(2026, 10, 14, 18, 29).getTime()
 const MORNING = new Date(2026, 10, 15, 8, 30).getTime()
+// Sun 22 Nov 2026, 18:31: the band asked for tomorrow's first step though nobody had ended the day.
+const LATE = new Date(2026, 10, 22, 18, 31).getTime()
 const ASKED = { v: 1 as const, day: '2026-11-14', text: 'Answer R4 of the CEO review', setAt: EVENING }
+const ASK_NOW = { doc: null, draft: '', note: '', forced: true }
 
-test('shutdown: shows from 18:30 on, not before, and only once a day (a skip counts too)', () => {
-  expect(shutdownDue(BEFORE, null, false)).toBe(false)
-  expect(shutdownDue(EVENING, null, false)).toBe(true)
-  expect(shutdownDue(EVENING, { ...ASKED, text: '' }, false)).toBe(false)
-  expect(shutdownDue(EVENING, ASKED, false)).toBe(false)
-  // Yesterday's answer does not count for today; /coanda-shutdown forces it at any hour.
-  expect(shutdownDue(EVENING, { ...ASKED, day: '2026-11-13' }, false)).toBe(true)
-  expect(shutdownDue(BEFORE, ASKED, true)).toBe(true)
-
+test('shutdown: no clock; it shows only when the person asks for it, at any hour', () => {
+  expect(shutdownDue(false)).toBe(false)
+  expect(shutdownDue(true)).toBe(true)
+  // A quiet evening turn with nothing asked is the usual band (the 18:30 rule is gone).
+  expect(rowsOf(bandModel(snap({ now: LATE }))).moment).toBe('resting')
+  expect(rowsOf(bandModel(snap({ now: EVENING }))).moment).toBe('resting')
   expect(rowsOf(bandModel(snap({ now: BEFORE }))).moment).toBe('resting')
-  const row = only(bandModel(snap({ now: EVENING })))
-  expect(rowsOf(bandModel(snap({ now: EVENING }))).moment).toBe('shutdown')
+
+  const row = only(bandModel(snap({ now: EVENING, shutdown: ASK_NOW })))
+  expect(rowsOf(bandModel(snap({ now: EVENING, shutdown: ASK_NOW }))).moment).toBe('shutdown')
   expect(row).toMatchObject({ part: 'shutdown', label: 'Shutdown', text: ["What's tomorrow's first step?"] })
   expect(row.inputs?.map(one => [one.key, one.placeholder, one.button?.label])).toEqual([['shutdown-input', 'Ship the v0.1 install', 'Save']])
   expect(labels(row)).toEqual(['~Skip'])
-  expect(rowsOf(bandModel(snap({ now: EVENING }))).primary?.text).toEqual(['◎ Ship the v0.1 install'])
-  // The same hour with the answer stored: the usual band.
-  expect(rowsOf(bandModel(snap({ now: EVENING, shutdown: { doc: ASKED, draft: '', note: '', forced: false } }))).moment).toBe('resting')
+  expect(rowsOf(bandModel(snap({ now: EVENING, shutdown: ASK_NOW }))).primary?.text).toEqual(['◎ Ship the v0.1 install'])
+  // Asked in the morning, or again after today's answer: it shows.
+  expect(rowsOf(bandModel(snap({ now: MORNING, shutdown: ASK_NOW }))).moment).toBe('shutdown')
+  expect(rowsOf(bandModel(snap({ now: EVENING, shutdown: { ...ASK_NOW, doc: ASKED } }))).moment).toBe('shutdown')
+})
+
+test('shutdown: only the ritual phrase on its own opens it, not the same words inside a sentence', () => {
+  for (const yes of ['Nico out', 'nico out', '  NICO OUT. ', 'Nico  out!', 'shutdown', 'Shutdown.'])
+    expect(isShutdownPhrase(yes)).toBe(true)
+  for (const no of ['stop', 'done', 'delete the branch', '/mirror:stop', 'run /mirror:limit status', 'Next action: shutdown', 'shutdown the server', 'Nico out tomorrow', ''])
+    expect(isShutdownPhrase(no)).toBe(false)
 })
 
 test('shutdown: waits for a quiet turn; placeholder falls back; every state is within the budget', () => {
   const none = { focus: { status: 'none' as const, primary: '', laneId: '', lanes: [] } }
-  expect(rowsOf(bandModel(snap({ now: EVENING, isWorking: true }))).moment).toBe('working')
-  expect(rowsOf(bandModel(snap({ now: EVENING, cards: [cardOf('c1')] }))).moment).toBe('pick')
-  expect(only(bandModel(snap({ now: EVENING, ...none }))).inputs?.[0]?.placeholder).toBe(SHUTDOWN_FALLBACK)
-  for (const one of [snap({ now: EVENING }), snap({ now: EVENING, ...none }), snap({ now: EVENING, shutdown: { doc: null, draft: 'x', note: 'Write one step first, or skip.', forced: false } })])
+  expect(rowsOf(bandModel(snap({ now: EVENING, isWorking: true, shutdown: ASK_NOW }))).moment).toBe('working')
+  expect(rowsOf(bandModel(snap({ now: EVENING, shutdown: ASK_NOW, cards: [cardOf('c1')] }))).moment).toBe('pick')
+  expect(only(bandModel(snap({ now: EVENING, shutdown: ASK_NOW, ...none }))).inputs?.[0]?.placeholder).toBe(SHUTDOWN_FALLBACK)
+  for (const one of [snap({ now: EVENING, shutdown: ASK_NOW }), snap({ now: EVENING, shutdown: ASK_NOW, ...none }), snap({ now: EVENING, shutdown: { doc: null, draft: 'x', note: 'Write one step first, or skip.', forced: true } })])
     expect(overBudget(bandModel(one))).toEqual([])
-  expect(only(bandModel(snap({ now: EVENING, shutdown: { doc: null, draft: '', note: 'Write one step first, or skip.', forced: false } }))).fieldNote).toBe('Write one step first, or skip.')
+  expect(only(bandModel(snap({ now: EVENING, shutdown: { doc: null, draft: '', note: 'Write one step first, or skip.', forced: true } }))).fieldNote).toBe('Write one step first, or skip.')
 })
 
 test('shutdown: an empty answer is refused, the rest is one short line', () => {
@@ -1821,11 +1830,16 @@ test('shutdown: shows the next calendar day only, in the Primary area, until a P
   expect(rowsOf(bandModel(snap({ now: MORNING, shutdown }))).primary?.text).toEqual(['◎ Ship the v0.1 install'])
 })
 
-test('shutdown: the question appears at 18:30, an empty Save is refused, Save keeps it, tomorrow it shows', async ($, on) => {
+test('shutdown: "Nico out" opens it, an empty Save is refused, Save keeps it, tomorrow it shows', async ($, on) => {
   const { ui, saved, clock } = await bandOver($, on, { ...READY_SETUP, now: BEFORE })
 
   expect(await texts(ui)).not.toContain('SHUTDOWN')
-  await clock!.advance(60_000)
+  // The clock passing 18:30 asks nothing; nor does a message that only mentions stopping.
+  await clock!.advance(2 * 60_000)
+  expect(await texts(ui)).not.toContain('SHUTDOWN')
+  await $.prompt.submit({ text: 'done, /mirror:stop next', wait: false, origin: { kind: 'composer' } } as never)
+  expect(await texts(ui)).not.toContain('SHUTDOWN')
+  await $.prompt.submit({ text: 'Nico out', wait: false, origin: { kind: 'composer' } } as never)
   expect(await texts(ui)).toContain('SHUTDOWN')
   expect(await texts(ui)).toContain("What's tomorrow's first step?")
 
@@ -1849,9 +1863,11 @@ test('shutdown: the question appears at 18:30, an empty Save is refused, Save ke
   await ui.unmount()
 })
 
-test('shutdown: Skip writes nothing down and the question stays away for the day; /coanda-shutdown shows it now', async ($, on) => {
+test('shutdown: Skip writes nothing down and closes it; "shutdown" and /coanda-shutdown show it now', async ($, on) => {
   const { ui, saved } = await bandOver($, on, { ...READY_SETUP, now: EVENING })
 
+  expect(await texts(ui)).not.toContain('SHUTDOWN')
+  await $.prompt.submit({ text: 'Shutdown', wait: false, origin: { kind: 'composer' } } as never)
   expect(await texts(ui)).toContain('SHUTDOWN')
   await ui.press({ key: 'shutdown-skip' })
   expect(saved.shutdown).toMatchObject({ day: '2026-11-14', text: '' })
@@ -2005,14 +2021,14 @@ test('day record on a host: Not today hides the record and writes nothing; with 
 
 // ---- The four features together: who shows when ---------------------------------------------------------
 
-test('together: at 18:30 the day record comes first, then the shutdown question, then the usual band; a question or a run wins over both', () => {
+test('together: at 18:30 the day record comes first, then the shutdown question once asked, then the usual band; a question or a run wins over both', () => {
   const evening = new Date(2026, 10, 14, 18, 30).getTime()
   const day = { wins: wins3(evening), now: evening }
 
-  // Both are due: the day's record, then (once answered) tomorrow's first step.
+  // Both are due: the day's record, then (once answered, and once the day is ended) tomorrow's first step.
   expect(rowsOf(bandModel(snap(day))).moment).toBe('today')
-  expect(rowsOf(bandModel(snap({ ...day, wins: { ...wins3(evening), answered: true } }))).moment).toBe('shutdown')
-  expect(rowsOf(bandModel(snap({ ...day, wins: { ...wins3(evening), answered: true }, shutdown: { doc: { v: 1, day: '2026-11-14', text: '', setAt: 1 }, draft: '', note: '', forced: false } }))).moment).toBe('resting')
+  expect(rowsOf(bandModel(snap({ ...day, wins: { ...wins3(evening), answered: true }, shutdown: ASK_NOW }))).moment).toBe('shutdown')
+  expect(rowsOf(bandModel(snap({ ...day, wins: { ...wins3(evening), answered: true } }))).moment).toBe('resting')
 
   // A run in progress shows neither, and a card to answer comes before both.
   expect(rowsOf(bandModel(snap({ ...day, isWorking: true }))).moment).toBe('working')
@@ -2172,9 +2188,11 @@ test('row budget: the four features (breathing, stand-up nudge, shutdown questio
   const over: string[] = []
   const check = async (name: string) => void over.push(...overRows(name, await ui.drawn()))
 
-  // Day record, then the shutdown question, both due at 18:30.
+  // Day record, due at 17:30; then the shutdown question, once asked with "Nico out".
   await check('day record (3 wins)')
   await ui.press({ key: 'today-skip' })
+  await $.prompt.submit({ text: 'Nico out', wait: false, origin: { kind: 'composer' } } as never)
+  expect(JSON.stringify(await ui.drawn())).toContain("What's tomorrow's first step?")
   await check('shutdown question')
   await ui.press({ key: 'shutdown-skip' })
 

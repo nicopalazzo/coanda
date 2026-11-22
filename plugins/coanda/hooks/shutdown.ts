@@ -3,20 +3,13 @@ import { t } from './i18n'
 import { dayKey } from './time'
 
 // The shutdown question (Cal Newport's ritual: write the open loop down so it stops pulling at the
-// mind). After this local time, once per day, the band asks for tomorrow's first step; the answer
+// mind). Only when the person ends the day ("Nico out", "shutdown" or /coanda-shutdown), never by the
+// clock: on Sun 22 Nov 2026 an 18:30 rule asked it in the middle of the working evening. The answer
 // shows the next calendar day in the Primary area, until that day has a Primary.
-export const SHUTDOWN_HOUR = 18
-export const SHUTDOWN_MINUTE = 30
 
 // The placeholder when today has no Primary.
 export const SHUTDOWN_FALLBACK = 'Answer R4 of the CEO review'
 export const shutdownFallback = (): string => t('shutdown.fallback')
-
-const isAfterHour = (now: number): boolean => {
-  const d = new Date(now)
-
-  return d.getHours() * 60 + d.getMinutes() >= SHUTDOWN_HOUR * 60 + SHUTDOWN_MINUTE
-}
 
 // The day key after `day` ("2026-11-14" gives "2026-11-15"), by the calendar, not by 24 hours.
 export function nextDay(day: string): string {
@@ -25,12 +18,9 @@ export function nextDay(day: string): string {
   return dayKey(new Date(y, m - 1, d + 1).getTime())
 }
 
-// Whether the row shows: past the hour and nothing stored for today (a skip is stored too), or
-// forced by /coanda-shutdown for checking.
-export function shutdownDue(now: number, doc: ShutdownDoc | null, forced: boolean): boolean {
-  if (forced) return true
-
-  return isAfterHour(now) && doc?.day !== dayKey(now)
+// Whether the row shows: only once asked (a ritual phrase or /coanda-shutdown), until Save or Skip.
+export function shutdownDue(asked: boolean): boolean {
+  return asked
 }
 
 // Last night's first step, only on the next calendar day; '' otherwise (or when it was skipped).
@@ -43,4 +33,14 @@ export function checkShutdown(text: string): { ok: true; value: string } | { ok:
   const value = text.replace(/\s+/g, ' ').trim().slice(0, 120)
 
   return value === '' ? { ok: false, message: t('shutdown.empty') } : { ok: true, value }
+}
+
+// The ritual phrases that open the shutdown question when typed on their own ("Nico out", "shutdown"),
+// whatever the case, spaces or end punctuation. The same words inside a sentence do not count.
+export const SHUTDOWN_PHRASES = ['nico out', 'shutdown']
+
+export function isShutdownPhrase(text: string): boolean {
+  const said = text.toLowerCase().replace(/\s+/g, ' ').trim().replace(/[.!?…。！？]+$/u, '').trim()
+
+  return SHUTDOWN_PHRASES.includes(said)
 }
