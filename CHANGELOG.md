@@ -2,6 +2,10 @@
 
 One line per release. Newest first.
 
+## 0.1.63: Mirror's nudge in the band
+
+- Coanda's side of the Mirror band contract v1: it writes a heartbeat to `$MIRROR_HOME/band.json` (else `~/.mirror/band.json`) every 30 s, and shows Mirror's held-message nudge (`nudge-now.json`, only for this session and only when Mirror says "band") with Check it, Send anyway, Snooze, Dismiss, and Turn off Mirror in Details. Each press writes `answers[session]` to `band.json`. Nothing is written when Mirror's folder is not there.
+
 ## 0.1.62: shutdown only when you end the day
 
 - The shutdown question ("What's tomorrow's first step?") no longer opens by itself at 18:30. It shows only when you type "Nico out" or "shutdown" as the whole message, or run `/coanda-shutdown`. The same words inside a sentence ("done", "stop", "Next action: shutdown") do not open it.

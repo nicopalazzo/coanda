@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 
 // Pure files: no host calls, no clock, no files.
-const CORE = ['band', 'focus', 'idle', 'time', 'cards', 'plan', 'next', 'question', 'line', 'goals-ask', 'standup', 'shutdown', 'wins', 'kpi', 'i18n', 'words', 'lexicon']
+const CORE = ['band', 'focus', 'idle', 'time', 'cards', 'plan', 'next', 'question', 'line', 'goals-ask', 'standup', 'shutdown', 'wins', 'kpi', 'i18n', 'words', 'lexicon', 'mirror']
 const SHELL = ['register', 'render', 'grid', 'lab', 'lab-client', 'light', 'stage', 'lamp', 'state', 'store', 'io', 'model', 'demo-run', 'kpi-view']
 
 const sources = Object.fromEntries(
@@ -97,11 +97,11 @@ check(
   hooksFiles(here).flatMap(path => MACHINE.filter(word => readFileSync(path, 'utf8').includes(word)).map(word => `${relative(here, path)}: contains ${word}`)),
 )
 check(
-  'only HOME, CLAUDE_CONFIG_DIR and the locale (LC_ALL, LC_MESSAGES, LANG) are read from the environment, each spelled out',
+  'only HOME, MIRROR_HOME, CLAUDE_CONFIG_DIR and the locale (LC_ALL, LC_MESSAGES, LANG) are read from the environment, each spelled out',
   Object.entries(sources).flatMap(([file, text]) => [
     ...[...text.matchAll(/\$\.env\.(?:get|set)\(\s*([^)]*?)\s*\)/g)]
       .map(m => m[1])
-      .filter(arg => !["'HOME'", "'CLAUDE_CONFIG_DIR'", "'LC_ALL'", "'LC_MESSAGES'", "'LANG'"].includes(arg))
+      .filter(arg => !["'HOME'", "'MIRROR_HOME'", "'CLAUDE_CONFIG_DIR'", "'LC_ALL'", "'LC_MESSAGES'", "'LANG'"].includes(arg))
       .map(arg => `${file}: reads the environment with ${arg}`),
     ...(/\$\.env\.set/.test(text) ? [`${file}: sets an environment variable`] : []),
   ]),
