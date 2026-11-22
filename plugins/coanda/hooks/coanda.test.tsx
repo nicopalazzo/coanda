@@ -5,6 +5,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { BandModel, BandRow, Card, Setup, Snapshot, Step } from '../types'
 import { BREATHE_AFTER_MS, bandModel, overBudget } from './band'
 import { BREATHE_SECONDS, BREATHE_SVG, LABEL_WIDTH } from './render'
+import { linesOf } from './layout'
 import { setLang, t } from './i18n'
 import type { Lang } from './i18n'
 import { close, supersede, toCard } from './cards'
@@ -2103,6 +2104,45 @@ test('row budget: the guard counts the placed stage and catches an overfull scre
   expect(overRows('question, 3 options with consequences, hard to undo', stage(12))).toEqual(['question, 3 options with consequences, hard to undo: grew to 12 rows (it was known at 11)'])
   expect(overRows('question, 3 options with consequences, hard to undo', stage(9))[0]).toContain('remove its KNOWN_OVER entry')
   expect(overRows('empty', { type: 'Box', children: [] })).toEqual(['empty: no placed stage drawn'])
+})
+
+test('a question that wraps pushes its buttons down, and the tag leaves it room (seen 22 Nov: "penalty?" under the buttons)', async ($, on) => {
+  const { ui, model } = await bandOver($, on, READY)
+  const LONG = 'Approve the band contract with the 3 buttons, Details placement, and no cooldown penalty?'
+  const topOf = (chain: Drawn[]) => Number([...chain].reverse().find(b => b.props?.top !== undefined)?.props?.top)
+  const rowsFor = async (question: string) => {
+    model.text = JSON.stringify({ moment: 'question', question, suggestions: [{ label: 'Approve as proposed', prompt: 'Yes.' }, { label: 'Change the button set', prompt: 'Change.' }, { label: 'Keep cooldown penalty', prompt: 'Keep.' }] })
+    await done($, `t-${question.length}`, 'Ready?')
+    await settle(async () => (await ui.find({ type: 'Text', text: new RegExp(question.slice(0, 12)) })) !== undefined)
+    const drawn = await ui.drawn()
+    const all = nodesOf(drawn)
+    const text = all.find(({ node }) => node.type === 'Text' && node.children?.[0] === question)!
+    const button = all.find(({ node }) => node.type === 'Button' && node.props?.label === 'Approve as proposed')!
+
+    return { question: topOf(text.above), buttons: topOf(button.above), stage: stageRows(drawn)[0]! }
+  }
+
+  // One line: the buttons start two rows under it (the line and one blank row), as before.
+  const short = await rowsFor('Ship it now?')
+  expect(short.buttons - short.question).toBe(2)
+
+  // The 22 Nov question with its `inferred` tag: the text wraps to 2 lines, so the buttons sit 3 rows under it, and the band still fits 9 rows.
+  const long = await rowsFor(LONG)
+  expect(long.buttons - long.question).toBe(3)
+  expect(long.stage).toBeLessThanOrEqual(MAX_ROWS)
+  await ui.unmount()
+})
+
+test('linesOf: rows a wrapping line takes; a tag narrows the room; wide characters count double', () => {
+  expect(linesOf('Ship it now?', 70)).toBe(1)
+  // The 22 Nov question (89 characters): 1 line with the whole width, 2 in the room the `inferred` tag leaves.
+  const q = 'Approve the band contract with the 3 buttons, Details placement, and no cooldown penalty?'
+  expect(linesOf(q, 150)).toBe(1)
+  expect(linesOf(q, 70)).toBe(2)
+  expect(linesOf(q, 30)).toBe(3)
+  // A word wider than the line is broken, never lost.
+  expect(linesOf('x'.repeat(100), 30)).toBe(3)
+  expect(linesOf('确认'.repeat(20), 30)).toBe(3)
 })
 
 test('row budget: the screens of the band (resting, Details, questions, Sent, Working) fit 9 rows', async ($, on) => {
