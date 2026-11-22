@@ -2,6 +2,10 @@
 
 One line per release. Newest first.
 
+## 0.1.63: a long question no longer sits under its buttons
+
+- A question that wraps to two lines (for example with the orange `inferred` tag beside it) now pushes its buttons down a row, so the second line is no longer drawn under them. The line count leaves room for the tag. A two-line question still fits the band's 9 rows.
+
 ## 0.1.62: shutdown only when you end the day
 
 - The shutdown question ("What's tomorrow's first step?") no longer opens by itself at 18:30. It shows only when you type "Nico out" or "shutdown" as the whole message, or run `/coanda-shutdown`. The same words inside a sentence ("done", "stop", "Next action: shutdown") do not open it.
