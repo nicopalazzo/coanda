@@ -20,6 +20,7 @@ import { clockTime, dayKey } from './time'
 import { BREAK_MS, FAST_CHECK, LONG_MS, NO_STANDUP, RUNS, noteRun, nudgeShows } from './standup'
 import { addWins, chipsOf, commitText, headline, isDue, journalBlock, mergeJournal, newlyCompleted, winsOf } from './wins'
 import { journalPath } from './io'
+import { BAND_FILE, answerAt, heldPrompt, isoOf, parseBand, parseNudge, withAnswer, withHeartbeat } from './mirror'
 import { NO_KPI, addKpi, isCorrection, isRework, kpiLines, toKpi } from './kpi'
 import type { KpiDoc } from '../types'
 
@@ -534,6 +535,8 @@ type Own = {
   unreadable?: string[]
   // The engine refuses every submitted prompt.
   submitFails?: true
+  // What the prompt box holds (a message Mirror is holding, for instance).
+  box?: string
 }
 
 // A band mounted over a person's own setup: what `$.store` holds, the files that exist, the
@@ -551,6 +554,9 @@ async function bandOver($: Parameters<TestBody>[0], on: Parameters<TestBody>[1],
   const commands: string[] = []
   on('command.register', (_, e) => (commands.push(e.name), { value: { command: e.name } }))
   on('tool.call', () => ({ result: {} }))
+  // Mirror's own command, run as the person's (the host refuses a plugin's prompt that begins with "/"): kept in `ran`.
+  const ran: string[] = []
+  on('command.run', { command: 'mirror:check' }, (_, e) => (ran.push(e.command), { text: '' }))
   on('fs.exists', (_, e) => ({ value: own.files[e.path] !== undefined || (own.unreadable ?? []).includes(e.path) }))
   on('fs.read', (_, e) => {
     // Claude's own settings.json is read for the language; `reads` counts every other file.
@@ -572,7 +578,19 @@ async function bandOver($: Parameters<TestBody>[0], on: Parameters<TestBody>[1],
 
     return { text: e.text }
   })
-  on('prompt.read', () => ({ value: { text: '', cursor: 0 } }))
+  on('prompt.read', () => ({ value: { text: own.box ?? '', cursor: 0 } }))
+  // `mv -f from to`, the one command the band runs (the atomic write of band.json): the file moves in the test's files.
+  const commandsRun: string[][] = []
+  on('process.run', (_, e) => {
+    commandsRun.push([...e.argv])
+    const [name, , from, to] = e.argv
+    if (name === 'mv' && from !== undefined && to !== undefined) {
+      own.files[to] = own.files[from] ?? ''
+      delete own.files[from]
+    }
+
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
   on('prompt.fill', () => ({ isFilled: true }))
   on('ui.toast', (_, e) => (toasts.push(e.text), { value: undefined }))
   on('ui.status', () => ({ value: undefined }))
@@ -596,7 +614,7 @@ async function bandOver($: Parameters<TestBody>[0], on: Parameters<TestBody>[1],
   await start()
   const ui = await $.ui.mount(BAND)
 
-  return { ui, clock, reads, writes, saved, sets, sent, toasts, model, commands, restart: start }
+  return { ui, clock, reads, writes, saved, sets, sent, toasts, model, commands, commandsRun, ran, restart: start }
 }
 
 type Ui = Awaited<ReturnType<typeof bandOver>>['ui']
@@ -2351,6 +2369,8 @@ test('the band in French, Spanish and Chinese: every moment speaks the language,
     ['working, with steps and breathing', { isWorking: true, workingSince: NOW - 40_000, plan: { steps: [stepOf('Read the file', 'in_progress'), stepOf('Write', 'pending')], planTurn: 0 }, focus: ok }],
     ['resting, done', { reply: { moment: 'other', isJudgment: false, question: '', done: 'merged', next: '', suggestions: [] }, focus: ok }],
     ['resting, details open', { detailsOpen: true, focus: ok }],
+    ['a Mirror nudge', { mirror: { at: '2026-11-22T19:10:00+01:00', text: 'x', ask: 'y' }, focus: ok }],
+    ['a Mirror nudge, details open', { mirror: { at: '2026-11-22T19:10:00+01:00', text: 'x', ask: 'y' }, detailsOpen: true, focus: ok }],
     ['resting, a nudge', { standup: { streak: 3, lastEndAt: NOW }, focus: ok }],
     ['shutdown', { shutdown: { doc: null, draft: '', note: '', forced: true }, focus: ok }],
     ['the day record', { wins: { v: 1, day: dayKey(NOW), items: [{ text: 'Read the file', kind: 'step', at: 1 }], answered: false, open: true }, focus: ok }],
@@ -2530,5 +2550,300 @@ test('/coanda-language: a choice saved earlier is used in a new session, ahead o
   const { ui } = await bandOver($, on, { setup: undefined, files: {}, env: { HOME: '/home/n', LANG: 'es_ES.UTF-8' }, docs: { language: { v: 1, lang: 'zh' } } })
 
   expect(await texts(ui)).toContain('设置你的目标')
+  await ui.unmount()
+})
+
+// ---- Mirror (BAND-CONTRACT-v1): the band's side, C1 to C4 ------------------------------------------------------
+// Mirror writes nudge-now.json and the band reads it; the band writes band.json (a heartbeat per session, the last
+// button pressed per session) and Mirror reads it. The five scenarios are Slice 3 of SIM-RESULTS-2026-11-22: band on,
+// started late, stopped, two sessions, corrupt file. The band's session is "s1".
+
+const MIRROR_HOME = '/home/n/.mirror'
+const NUDGE_PATH = `${MIRROR_HOME}/nudge-now.json`
+const BAND_PATH = `${MIRROR_HOME}/${BAND_FILE}`
+const T0 = new Date(2026, 10, 22, 19, 10, 0).getTime()
+const NUDGE_TEXT = '3 messages without a question.'
+const NUDGE_ASK = "Review Claude's last answer?"
+const nudgeFile = (over: Record<string, unknown> = {}): string =>
+  JSON.stringify({ v: 1, session_id: 's1', at: isoOf(T0), text: NUDGE_TEXT, ask: NUDGE_ASK, shown_in: 'band', buttons: ['check', 'send', 'snooze', 'dismiss', 'off'], ...over })
+
+// The band over a goals file, with Mirror's folder there (without the folder the band writes nothing: it is not installed).
+async function mirrorBand($: Parameters<TestBody>[0], on: Parameters<TestBody>[1], files: Record<string, string> = {}, extra: Partial<Own> = {}) {
+  const own: Own = { setup: SETUP_FILE('/data/goals.md'), files: { '/data/goals.md': GOALS_TEXT, [MIRROR_HOME]: '', ...files }, env: { HOME: '/home/n' }, now: T0, ...extra }
+  const made = await bandOver($, on, own)
+  await settle(async () => own.files[BAND_PATH] !== undefined)
+  const band = (): ReturnType<typeof parseBand> => parseBand(own.files[BAND_PATH] ?? null)
+
+  return { ...made, files: own.files, band }
+}
+
+test('mirror: parseNudge shows a nudge only for v 1, this session and "band"; anything else shows nothing', () => {
+  expect(parseNudge(nudgeFile(), 's1')).toEqual({ at: isoOf(T0), text: NUDGE_TEXT, ask: NUDGE_ASK })
+  expect(parseNudge(nudgeFile({ ask: undefined }), 's1')).toEqual({ at: isoOf(T0), text: NUDGE_TEXT, ask: '' })
+  for (const over of [{ v: 2 }, { v: undefined }, { session_id: 's2' }, { session_id: '' }, { shown_in: 'chat' }, { shown_in: undefined }, { text: '' }, { text: 7 }, { at: undefined }]) {
+    expect(parseNudge(nudgeFile(over), 's1')).toBeNull()
+  }
+  for (const raw of ['', '{', '[]', 'null', '"x"', nudgeFile().slice(0, 40)]) expect(parseNudge(raw, 's1')).toBeNull()
+})
+
+test('mirror: a heartbeat keeps other sessions\' entries and every answer; an answer never goes before its nudge', () => {
+  const other = { v: 1, sessions: { s2: isoOf(T0 - 1000) }, answers: { s2: { at: isoOf(T0 - 500), button: 'snooze' } } }
+  const first = withHeartbeat(parseBand(JSON.stringify(other)), 's1', T0)
+
+  expect(first.sessions).toEqual({ s2: isoOf(T0 - 1000), s1: isoOf(T0) })
+  expect(first.answers).toEqual(other.answers)
+  // Written again 30 s later: the same session's entry moves.
+  expect(withHeartbeat(first, 's1', T0 + 30_000).sessions['s1']).toBe(isoOf(T0 + 30_000))
+
+  // An answer to a nudge stamped later in the same second still counts: its time is rounded up, never before the nudge's.
+  expect(answerAt(T0 + 200, isoOf(T0))).toBe(T0 + 1000)
+  expect(answerAt(T0, isoOf(T0 + 5000))).toBe(T0 + 5000)
+  expect(answerAt(T0, 'not a time')).toBe(T0)
+  expect(withAnswer(first, 's1', T0, 'dismiss').answers).toEqual({ ...other.answers, s1: { at: isoOf(T0), button: 'dismiss' } })
+
+  // Heartbeats and answers older than a day go; the ones of today stay.
+  const old = { v: 1, sessions: { gone: isoOf(T0 - 25 * 3600 * 1000) }, answers: { gone: { at: isoOf(T0 - 25 * 3600 * 1000), button: 'off' } } }
+  expect(withHeartbeat(parseBand(JSON.stringify(old)), 's1', T0)).toEqual({ v: 1, sessions: { s1: isoOf(T0) }, answers: {} })
+
+  // The time is local with its offset, to the second.
+  expect(isoOf(T0)).toMatch(/^2026-11-22T19:10:00[+-]\d\d:\d\d$/)
+  expect(Date.parse(isoOf(T0))).toBe(T0)
+})
+
+test('mirror: band.json is read as empty when missing, cut off or of another shape, and a bad entry is left out', () => {
+  const empty = { v: 1, sessions: {}, answers: {} }
+  for (const raw of [null, '', '{"v":1,"sessions":{"s1":"2026', '[]', '3', 'null']) expect(parseBand(raw)).toEqual(empty)
+  expect(parseBand('{"sessions":{"a":"x","b":4},"answers":{"a":{"at":"t","button":"check"},"b":{"at":"t","button":"zap"},"c":7}}')).toEqual({ v: 1, sessions: { a: 'x' }, answers: { a: { at: 't', button: 'check' } } })
+  // A band from Mirror 0.4.1 has no `v`: still read.
+  expect(parseBand('{"sessions":{"a":"x"}}').sessions).toEqual({ a: 'x' })
+})
+
+test('mirror: "Send anyway" resends the box, else the message the band saw just before the nudge, else nothing', () => {
+  const nudgeAt = isoOf(T0)
+  expect(heldPrompt('Make it blue', 'older', T0 - 1000, nudgeAt)).toBe('Make it blue')
+  expect(heldPrompt('', 'Make it blue', T0 - 2000, nudgeAt)).toBe('Make it blue')
+  expect(heldPrompt('  ', 'Make it blue', T0 + 500, nudgeAt)).toBe('Make it blue')
+  // Too old to be the held one, never seen, or nothing to send.
+  expect(heldPrompt('', 'Make it blue', T0 - 5 * 60_000, nudgeAt)).toBe('')
+  expect(heldPrompt('', 'Make it blue', 0, nudgeAt)).toBe('')
+  expect(heldPrompt('', '', T0, nudgeAt)).toBe('')
+  expect(heldPrompt('', 'Make it blue', T0, 'not a time')).toBe('')
+})
+
+test('mirror moment: text and question, 3 buttons and the quiet Dismiss, "Turn off Mirror" in Details, inside the budget', () => {
+  const mirror = { at: isoOf(T0), text: NUDGE_TEXT, ask: NUDGE_ASK }
+  const model = bandModel(snap({ mirror }))
+  const row = only(model)
+
+  expect(rowsOf(model)).toMatchObject({ moment: 'mirror', heading: 'Mirror' })
+  expect(row.text).toEqual([`${NUDGE_TEXT} ${NUDGE_ASK}`])
+  expect(labels(row)).toEqual(['Check it', 'Send anyway', 'Snooze', '~Dismiss'])
+  expect(row.buttons.map(b => b.action)).toEqual(['check', 'send', 'snooze', 'dismiss'].map(button => ({ kind: 'mirror', button })))
+  expect(row.buttons.map(b => b.variant)).toEqual(['primary', 'secondary', 'secondary', 'link'])
+  expect(overBudget(model)).toEqual([])
+  // Turn off Mirror is a link in the Primary row, there only once Details is open.
+  expect(rowsOf(model).primary?.buttons.map(b => b.label)).toEqual(['Details'])
+  const open = bandModel(snap({ mirror, detailsOpen: true }))
+  expect(rowsOf(open).primary?.buttons.map(b => b.label)).toEqual(['Turn off Mirror', 'Less'])
+  expect(rowsOf(open).primary?.buttons[0]?.action).toEqual({ kind: 'mirror', button: 'off' })
+  expect(overBudget(open)).toEqual([])
+  // No question from Mirror: just the text. Nothing shows while Claude works, and without a nudge the band is as before.
+  expect(only(bandModel(snap({ mirror: { ...mirror, ask: '' } }))).text).toEqual([NUDGE_TEXT])
+  expect(rowsOf(bandModel(snap({ mirror, isWorking: true }))).moment).toBe('working')
+  expect(rowsOf(bandModel(snap({ mirror: null }))).moment).toBe('resting')
+  expect(rowsOf(bandModel(snap({ detailsOpen: true }))).primary?.buttons.map(b => b.label)).toEqual(['Less'])
+  // The held message comes first: a card or a sent line waits.
+  expect(rowsOf(bandModel(snap({ mirror, cards: [cardOf('c1')] }))).moment).toBe('mirror')
+})
+
+test('mirror 1 (band on): the heartbeat is written at once and every 30 s, and the nudge shows with its words and buttons', async ($, on) => {
+  const { ui, clock, files, band } = await mirrorBand($, on)
+
+  expect(Object.keys(band().sessions)).toEqual(['s1'])
+  expect(band().sessions['s1']).toBe(isoOf(T0))
+  expect(files[`${BAND_PATH}.s1.tmp`]).toBeUndefined()
+  expect(await texts(ui)).not.toContain(NUDGE_TEXT)
+
+  // Mirror holds a message and writes its file; the band sees it at the next look and keeps beating.
+  files[NUDGE_PATH] = nudgeFile()
+  await clock!.advance(30_000)
+  await settle(async () => (await texts(ui)).includes(NUDGE_TEXT))
+  const shown = await texts(ui)
+
+  expect(shown).toContain(`${NUDGE_TEXT} ${NUDGE_ASK}`)
+  expect(await buttonsOf(ui)).toEqual(expect.arrayContaining(['Check it', 'Send anyway', 'Snooze', 'Dismiss']))
+  expect(band().sessions['s1']).toBe(isoOf(T0 + 30_000))
+  expect(overRows('mirror nudge', await ui.drawn())).toEqual([])
+
+  // Details open: "Turn off Mirror" shows, and the screen still fits.
+  await ui.press({ key: 'primary-details' })
+  expect(await buttonsOf(ui)).toContain('Turn off Mirror')
+  expect(overRows('mirror nudge, Details open', await ui.drawn())).toEqual([])
+  await clock!.advance(30_000)
+  expect(band().sessions['s1']).toBe(isoOf(T0 + 60_000))
+  await ui.unmount()
+})
+
+test('mirror 2 (band started late): a nudge Mirror wrote for the chat is not shown; the next one for the band is', async ($, on) => {
+  // Mirror found no heartbeat when it held the message: shown_in "chat" (the full nudge is in the chat).
+  const { ui, clock, files } = await mirrorBand($, on, { [NUDGE_PATH]: nudgeFile({ shown_in: 'chat' }) })
+
+  await clock!.advance(30_000)
+  expect(await texts(ui)).not.toContain(NUDGE_TEXT)
+  expect(await buttonsOf(ui)).not.toContain('Check it')
+
+  // Now the heartbeat is there: the next nudge says "band".
+  files[NUDGE_PATH] = nudgeFile({ at: isoOf(T0 + 40_000), text: 'Another one.' })
+  await clock!.advance(30_000)
+  await settle(async () => (await texts(ui)).includes('Another one.'))
+  expect(await texts(ui)).toContain('Another one.')
+  await ui.unmount()
+})
+
+test('mirror 3 (band stopped): no heartbeat in the baseline week, and nothing of Mirror is drawn', async ($, on) => {
+  const { ui, clock, files, band } = await mirrorBand($, on)
+
+  files[NUDGE_PATH] = nudgeFile()
+  await clock!.advance(30_000)
+  await settle(async () => (await texts(ui)).includes(NUDGE_TEXT))
+  const last = band().sessions['s1']
+  expect(last).toBe(isoOf(T0 + 30_000))
+
+  // The band goes off (the baseline week draws nothing): its heartbeat stops, so Mirror's 60 s window runs out.
+  await $.command.run({ command: 'coanda-baseline' } as never)
+  await clock!.advance(30_000)
+  await clock!.advance(30_000)
+  expect(band().sessions['s1']).toBe(last)
+  expect(await texts(ui)).not.toContain(NUDGE_TEXT)
+  expect(await buttonsOf(ui)).toEqual([])
+  await ui.unmount()
+})
+
+test('mirror 4 (two sessions): another session\'s nudge is not shown here, and its heartbeat and answer are kept', async ($, on) => {
+  const other = { v: 1, sessions: { s2: isoOf(T0 - 5000) }, answers: { s2: { at: isoOf(T0 - 1000), button: 'snooze' } } }
+  const { ui, clock, files, band } = await mirrorBand($, on, { [BAND_PATH]: JSON.stringify(other), [NUDGE_PATH]: nudgeFile({ session_id: 's2' }) })
+
+  await clock!.advance(30_000)
+  expect(await texts(ui)).not.toContain(NUDGE_TEXT)
+  expect(band().sessions).toEqual({ s2: isoOf(T0 - 5000), s1: isoOf(T0 + 30_000) })
+  expect(band().answers).toEqual(other.answers)
+
+  // Its own nudge shows, and answering it leaves s2's entries as they were.
+  files[NUDGE_PATH] = nudgeFile({ at: isoOf(T0 + 31_000) })
+  await clock!.advance(30_000)
+  await settle(async () => (await texts(ui)).includes(NUDGE_TEXT))
+  await ui.press({ key: 'mirror-dismiss' })
+  expect(band().answers['s2']).toEqual(other.answers.s2)
+  expect(band().answers['s1']?.button).toBe('dismiss')
+  expect(band().sessions['s2']).toBe(isoOf(T0 - 5000))
+  await ui.unmount()
+})
+
+test('mirror 5 (corrupt file): a cut-off band.json is replaced by a good one; a broken nudge file shows nothing', async ($, on) => {
+  const { ui, clock, files, band } = await mirrorBand($, on, { [BAND_PATH]: '{"v":1,"sessions":{"s1":"2026-11-22T19:', [NUDGE_PATH]: '{"v":1,"session_id":"s1","at":"2026-11-22T19:10:00+01:0' })
+
+  expect(() => JSON.parse(files[BAND_PATH] ?? '')).not.toThrow()
+  expect(band()).toEqual({ v: 1, sessions: { s1: isoOf(T0) }, answers: {} })
+  await clock!.advance(30_000)
+  expect(await texts(ui)).not.toContain('Check it')
+
+  // Mirror's file mended, with the wrong version, then right: only the right one shows.
+  files[NUDGE_PATH] = nudgeFile({ v: 2 })
+  await clock!.advance(30_000)
+  expect(await buttonsOf(ui)).not.toContain('Check it')
+  files[NUDGE_PATH] = nudgeFile()
+  await clock!.advance(30_000)
+  await settle(async () => (await buttonsOf(ui)).includes('Check it'))
+  expect(await buttonsOf(ui)).toContain('Check it')
+  await ui.unmount()
+})
+
+test('mirror: no folder, no band.json (Mirror is not installed); a write that fails leaves the band running', async ($, on) => {
+  const { ui, files } = await mirrorBand($, on, {}, { files: { '/data/goals.md': GOALS_TEXT } })
+  await settle(async () => false)
+
+  expect(files[BAND_PATH]).toBeUndefined()
+  expect(Object.keys(files).filter(path => path.includes('.mirror'))).toEqual([])
+  expect(await primaryOf(ui)).toBe('◎ Ship the v0.1 install')
+  await ui.unmount()
+})
+
+// What each button writes, and what else it does. The nudge was stamped at T0; the answers carry a time at or after it.
+const PRESSES: { button: 'check' | 'send' | 'snooze' | 'dismiss' | 'off'; label: string; sends: string[]; runs?: string[] }[] = [
+  { button: 'check', label: 'Check it', sends: [], runs: ['mirror:check'] },
+  { button: 'send', label: 'Send anyway', sends: ['Make it blue'] },
+  { button: 'snooze', label: 'Snooze', sends: [] },
+  { button: 'dismiss', label: 'Dismiss', sends: [] },
+  { button: 'off', label: 'Turn off Mirror', sends: [] },
+]
+
+for (const one of PRESSES) {
+  test(`mirror button "${one.label}": writes answers[s1] = {at, "${one.button}"}${one.runs !== undefined ? ' and runs /mirror:check' : one.sends.length > 0 ? ` and sends ${one.sends[0]}` : ' and sends nothing'}`, async ($, on) => {
+    const { ui, clock, files, band, sent, ran } = await mirrorBand($, on, { [NUDGE_PATH]: nudgeFile() }, { box: 'Make it blue' })
+    await clock!.advance(30_000)
+    await settle(async () => (await texts(ui)).includes(NUDGE_TEXT))
+    // "Turn off Mirror" is in Details.
+    if (one.button === 'off') await ui.press({ key: 'primary-details' })
+    const before = band().sessions['s1']
+
+    await ui.press({ key: `mirror-${one.button}` })
+    await settle(async () => band().answers['s1'] !== undefined)
+
+    const answer = band().answers['s1']
+    expect(answer?.button).toBe(one.button)
+    expect(Date.parse(answer?.at ?? '')).toBeGreaterThanOrEqual(T0)
+    expect(answer?.at).toBe(isoOf(T0 + 30_000))
+    // The write keeps the heartbeat; the file stays good.
+    expect(band().sessions['s1']).toBe(before)
+    expect(JSON.parse(files[BAND_PATH] ?? '')).toMatchObject({ v: 1 })
+    // The answer goes first, then the message (the table's order); Check it and Send anyway start a turn, the rest do not.
+    for (let i = 0; i < 50 && sent.length + ran.length < one.sends.length + (one.runs ?? []).length; i++) await new Promise(done => setTimeout(done, 5))
+    expect(sent).toEqual(one.sends)
+    expect(ran).toEqual(one.runs ?? [])
+    // The nudge is closed in the band at once, and stays closed while Mirror has not yet removed its file.
+    expect(await buttonsOf(ui)).not.toContain('Snooze')
+    await clock!.advance(30_000)
+    expect(await buttonsOf(ui)).not.toContain('Snooze')
+    expect(await texts(ui)).not.toContain(NUDGE_TEXT)
+    await ui.unmount()
+  })
+}
+
+test('mirror button "Send anyway" with no held message: it only answers, and says to press Enter', async ($, on) => {
+  const { ui, clock, band, sent, toasts } = await mirrorBand($, on, { [NUDGE_PATH]: nudgeFile() })
+  await clock!.advance(30_000)
+  await settle(async () => (await texts(ui)).includes(NUDGE_TEXT))
+  await ui.press({ key: 'mirror-send' })
+  await settle(async () => band().answers['s1'] !== undefined)
+
+  expect(band().answers['s1']?.button).toBe('send')
+  expect(sent).toEqual([])
+  expect(toasts.at(-1)).toContain('Press Enter')
+  await ui.unmount()
+})
+
+test('mirror button "Send anyway": the message the band saw just before the nudge is resent when the box is empty', async ($, on) => {
+  const { ui, clock, files, band, sent } = await mirrorBand($, on)
+  await $.prompt.submit({ text: 'Make it blue', wait: false, origin: { kind: 'composer' } } as never)
+  sent.length = 0
+  // Mirror held it and wrote its nudge two seconds later.
+  await clock!.advance(2_000)
+  files[NUDGE_PATH] = nudgeFile({ at: isoOf(T0 + 2_000) })
+  await clock!.advance(30_000)
+  await settle(async () => (await texts(ui)).includes(NUDGE_TEXT))
+  await ui.press({ key: 'mirror-send' })
+  await settle(async () => sent.length > 0)
+
+  expect(sent).toEqual(['Make it blue'])
+  expect(band().answers['s1']?.button).toBe('send')
+  await ui.unmount()
+})
+
+test('mirror: the band uses MIRROR_HOME when it is set, and writes through a temporary file renamed over band.json', async ($, on) => {
+  const { ui, files, commandsRun } = await mirrorBand($, on, { '/srv/m': '' }, { env: { HOME: '/home/n', MIRROR_HOME: '/srv/m/' } })
+
+  expect(parseBand(files['/srv/m/band.json'] ?? null).sessions['s1']).toBe(isoOf(T0))
+  expect(files[BAND_PATH]).toBeUndefined()
+  expect(commandsRun).toContainEqual(['mv', '-f', '/srv/m/band.json.s1.tmp', '/srv/m/band.json'])
   await ui.unmount()
 })

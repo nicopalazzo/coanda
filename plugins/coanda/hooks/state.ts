@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { StateDollar } from 'claude-code'
 
-import type { Asked, Card, DayWins, FocusResult, GoalsProposal, GoalsSaved, KpiDoc, Moment, Pending, Setup, SetupDraft, ShutdownDoc, Standup, Step, Suggestion, TypedPrimary } from '../types'
+import type { Asked, Card, DayWins, FocusResult, GoalsProposal, GoalsSaved, KpiDoc, MirrorState, Moment, Pending, Setup, SetupDraft, ShutdownDoc, Standup, Step, Suggestion, TypedPrimary } from '../types'
 import { NO_KPI } from './kpi'
 
 // Every atom of the mod lives here: this session's values, kept in $.state.
@@ -21,6 +21,11 @@ const focus = atom({ plugin: 'coanda', key: 'focus' } as const, { status: 'none'
 const steps = atom({ plugin: 'coanda', key: 'steps' } as const, [] as Step[])
 const suggestions = atom({ plugin: 'coanda', key: 'suggestions' } as const, [] as Suggestion[])
 const lastPrompt = atom({ plugin: 'coanda', key: 'lastPrompt' } as const, '')
+// When the band saw that message (ms; 0 when none): "Send anyway" only resends one that came just before Mirror's nudge.
+const lastPromptAt = atom({ plugin: 'coanda', key: 'lastPromptAt' } as const, 0)
+// Mirror's nudge for this session (nudge-now.json), and the `at` of the one the person answered, so it does not come back
+// while Mirror has not removed the file yet.
+const mirror = atom({ plugin: 'coanda', key: 'mirror' } as const, { nudge: null, answeredAt: '' } as MirrorState)
 const moment = atom({ plugin: 'coanda', key: 'moment' } as const, 'other' as Moment)
 // The question found in Claude's prose: always inferred; an open card wins over it.
 const asked = atom({ plugin: 'coanda', key: 'asked' } as const, null as Asked | null)
@@ -437,4 +442,20 @@ export async function getWins($: StateDollar): Promise<DayWins | null> {
 
 export async function updateWins($: StateDollar, change: (now: DayWins | null) => DayWins | null): Promise<DayWins | null> {
   return update($, wins, change)
+}
+
+export async function getLastPromptAt($: StateDollar): Promise<number> {
+  return read($, lastPromptAt)
+}
+
+export async function updateLastPromptAt($: StateDollar, change: (now: number) => number): Promise<number> {
+  return update($, lastPromptAt, change)
+}
+
+export async function getMirror($: StateDollar): Promise<MirrorState> {
+  return read($, mirror)
+}
+
+export async function updateMirror($: StateDollar, change: (now: MirrorState) => MirrorState): Promise<MirrorState> {
+  return update($, mirror, change)
 }

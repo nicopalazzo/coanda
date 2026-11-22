@@ -8,7 +8,7 @@ Coanda adds one calm band above the prompt in the Claude desktop app (the Code t
 
 Coanda is a *mod*: a small add-on that changes how Claude's own window looks. It sends nothing outside Claude. After each of Claude's replies, it asks Claude's small model (Haiku) one short question about that reply, to spot a question meant for you; that call sends up to 3,000 characters of your last message and 6,000 of the reply, through your own Claude account. It reads your goals file and keeps its small settings in Claude's own plugin folder.
 
-> **Status: early test, version 0.1.63.** Licence: [PolyForm Noncommercial 1.0.0](LICENSE). It is free for personal, educational and other noncommercial use; commercial use needs the author's permission.
+> **Status: early test, version 0.1.64.** Licence: [PolyForm Noncommercial 1.0.0](LICENSE). It is free for personal, educational and other noncommercial use; commercial use needs the author's permission.
 
 ## Install (3 steps)
 

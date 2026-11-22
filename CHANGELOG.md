@@ -2,6 +2,10 @@
 
 One line per release. Newest first.
 
+## 0.1.64: Mirror's nudge in the band
+
+- Coanda's side of the Mirror band contract v1: it writes a heartbeat to `$MIRROR_HOME/band.json` (else `~/.mirror/band.json`) every 30 s, and shows Mirror's held-message nudge (`nudge-now.json`, only for this session and only when Mirror says "band") with Check it, Send anyway, Snooze, Dismiss, and Turn off Mirror in Details. Each press writes `answers[session]` to `band.json`. Nothing is written when Mirror's folder is not there.
+
 ## 0.1.63: a long question no longer sits under its buttons
 
 - A question that wraps to two lines (for example with the orange `inferred` tag beside it) now pushes its buttons down a row, so the second line is no longer drawn under them. The line count leaves room for the tag. A two-line question still fits the band's 9 rows.

@@ -116,6 +116,14 @@ export type GoalsSaved = 'no' | 'waiting' | 'saved'
 
 export type KpiMode = 'on' | 'off'
 
+// The Mirror contract (BAND-CONTRACT-v1): the nudge Mirror holds for this session, and the two documents of band.json.
+export type MirrorButton = 'check' | 'send' | 'snooze' | 'dismiss' | 'off'
+export type MirrorNudge = { at: string; text: string; ask: string }
+export type MirrorAnswer = { at: string; button: MirrorButton }
+export type MirrorBand = { v: 1; sessions: Record<string, string>; answers: Record<string, MirrorAnswer> }
+// What the band holds of it: the nudge to show, and the `at` of the one the person answered (not shown again).
+export type MirrorState = { nudge: MirrorNudge | null; answeredAt: string }
+
 export type KpiCounts = {
   sessions: number
   turns: number
@@ -171,6 +179,8 @@ export type Snapshot = {
   shutdown: ShutdownState
   // The day record of today (null when none): see wins.ts.
   wins?: DayWins | null
+  // Mirror's nudge for this session, to show in the band (null or left out: none).
+  mirror?: MirrorNudge | null
 }
 
 // A press is data; dispatch() in register.tsx is the only place one is carried out.
@@ -199,11 +209,12 @@ export type BandAction =
   | { kind: 'shutdownSkip' } // the quiet exit: nothing asked again today
   | { kind: 'todaySave' } // "Save to journal": the day's wins are written to the journal
   | { kind: 'todaySkip' } // "Not today": the day record is hidden until tomorrow
+  | { kind: 'mirror'; button: MirrorButton } // a button of Mirror's nudge: the answer goes to band.json
 // 'link' is the one quiet exit, drawn as a text link (v3 rule 4). `detail` is the second line under
 // an answer: what follows from it (an option's consequence).
 export type BandButton = { key: string; label: string; variant?: 'primary' | 'secondary' | 'plain' | 'link'; detail?: string; action: BandAction }
 // Which v3 moment a 'rows' model is, so tests and render can tell without reading the rows.
-export type BandMoment = 'sent' | 'pick' | 'guessed' | 'working' | 'resting' | 'quiet' | 'shutdown' | 'today'
+export type BandMoment = 'sent' | 'pick' | 'guessed' | 'working' | 'resting' | 'quiet' | 'shutdown' | 'today' | 'mirror'
 export type BandModel =
   | { kind: 'hidden' }
   // Setup is one step with a heading (D4): what it finds in the goals file, drawn on the placed grid.
@@ -279,6 +290,8 @@ declare module 'claude-code' {
       lightLit: boolean
       standup: Standup
       wins: DayWins | null
+      mirror: MirrorState
+      lastPromptAt: number
     }
   }
 }

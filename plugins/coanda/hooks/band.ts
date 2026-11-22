@@ -1,4 +1,4 @@
-import type { BandButton, BandModel, BandRow, Card, Lane, Snapshot } from '../types'
+import type { BandButton, BandModel, BandRow, Card, Lane, MirrorButton, MirrorNudge, Snapshot } from '../types'
 import { MAX_LANES, endLabel, goalsState, laneText, primaryText } from './focus'
 import { joinAnd, t, tn } from './i18n'
 import { idleStage } from './idle'
@@ -19,11 +19,13 @@ export function bandModel(s: Snapshot): BandModel {
 
   // A guessed question waits for the turn to end; a decision card shows at once.
   const shown = questionToShow(s.cards, s.sessionId, s.isWorking ? null : s.asked)
-  const isBusy = s.isWorking || s.sent !== null || shown !== null
+  // Mirror's nudge holds a message the person has not sent yet: it waits for an answer, not for a turn.
+  const mirror = s.isWorking ? null : (s.mirror ?? null)
+  const isBusy = s.isWorking || s.sent !== null || shown !== null || mirror !== null
   // lastActivity 0 means no one has filled it in yet: unknown, so the full band.
   const quietMs = s.lastActivity === 0 ? 0 : s.now - s.lastActivity
   const stage = idleStage(isBusy, quietMs)
-  const primary = primaryRow(s)
+  const primary = primaryRow(s, mirror !== null)
 
   // The day record: offered from 17:30 or when asked for; only while the band rests. Asked for, it
   // shows past the idle stages too.
@@ -38,6 +40,8 @@ export function bandModel(s: Snapshot): BandModel {
 
     return { kind: 'rows', moment: 'sent', rows: [row], primary }
   }
+
+  if (mirror !== null) return { kind: 'rows', moment: 'mirror', heading: t('mirror.label'), rows: [mirrorRow(mirror)], primary }
 
   if (shown !== null && 'card' in shown) return { kind: 'rows', moment: 'pick', heading: waitingCount(s) > 1 ? t('question.waiting', { n: waitingCount(s) }) : t('question.label'), rows: [cardRow(shown.card, waitingCount(s))], primary }
 
@@ -73,6 +77,25 @@ export function bandModel(s: Snapshot): BandModel {
   if (goalOf(s) === '') return { kind: 'rows', moment, heading: t('primary.heading'), rows: [primarySetRow(s)] }
 
   return { kind: 'rows', moment, rows: [now], primary }
+}
+
+// Mirror's nudge, in its own words (the file holds them already localised): the text, the question, three buttons and
+// the quiet "Dismiss". "Turn off Mirror" is in Details (primaryRow). Each press is answered through band.json.
+function mirrorRow(nudge: MirrorNudge): BandRow {
+  const press = (button: MirrorButton, label: string, variant: 'primary' | 'secondary' | 'link'): BandButton => ({ key: `mirror-${button}`, label, variant, action: { kind: 'mirror', button } })
+
+  return {
+    part: 'question',
+    label: t('mirror.label'),
+    // One line: the text and its question together (a second line would take the row Details needs to stay inside 9).
+    text: [nudge.ask === '' ? nudge.text : `${nudge.text} ${nudge.ask}`],
+    buttons: [
+      press('check', t('mirror.check'), 'primary'),
+      press('send', t('mirror.send'), 'secondary'),
+      press('snooze', t('mirror.snooze'), 'secondary'),
+      press('dismiss', t('mirror.dismiss'), 'link'),
+    ],
+  }
 }
 
 // The stand-up nudge: a muted line and the quiet "Not now" on the NOW row itself (no new row), so the
@@ -216,7 +239,7 @@ const fromLastNight = (s: Snapshot): string[] => {
 
 // The Primary row shows the goal only; "Details" opens the Lane (rule 6). FocusResult has no
 // "done when" line yet, so Details shows the Lane alone.
-function primaryRow(s: Snapshot): BandRow {
+function primaryRow(s: Snapshot, isMirrorShown = false): BandRow {
   // The file's Lanes when it has any, else the typed ones, never both.
   const lane = laneText(s.focus.lanes.length > 0 ? s.focus : { ...s.focus, lanes: s.setup.lanes }, s.now)
   const goal = goalOf(s)
@@ -225,7 +248,11 @@ function primaryRow(s: Snapshot): BandRow {
   return {
     part: 'primary',
     text: [carried, ...(s.detailsOpen ? [lane === '' ? t('primary.noLane') : t('primary.lane', { lane })] : [])],
-    buttons: [{ key: 'primary-details', label: s.detailsOpen ? t('primary.less') : t('primary.details'), variant: 'link', action: { kind: 'details' } }],
+    buttons: [
+      // With Mirror's nudge showing, Details also holds "Turn off Mirror" (the Primary row is counted apart from the budget).
+      ...(isMirrorShown && s.detailsOpen ? [{ key: 'mirror-off', label: t('mirror.off'), variant: 'link' as const, action: { kind: 'mirror', button: 'off' } as const }] : []),
+      { key: 'primary-details', label: s.detailsOpen ? t('primary.less') : t('primary.details'), variant: 'link', action: { kind: 'details' } },
+    ],
   }
 }
 
@@ -249,7 +276,7 @@ export function overBudget(model: BandModel): string[] {
 
   if (model.kind !== 'rows') return []
 
-  const asks = model.moment === 'pick' || model.moment === 'guessed'
+  const asks = model.moment === 'pick' || model.moment === 'guessed' || model.moment === 'mirror'
   const limit = asks ? { rows: 2, buttons: 3, links: 1, chips: 1 } : { rows: 2, buttons: 1, links: 1, chips: 0 }
   // A field's own button (its submit) counts as a button too.
   const buttons = [...model.rows.flatMap(row => row.buttons), ...model.rows.flatMap(row => (row.inputs ?? []).flatMap(one => (one.button ? [{ variant: 'primary' as const }] : [])))]

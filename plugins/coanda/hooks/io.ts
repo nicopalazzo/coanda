@@ -74,3 +74,34 @@ export async function writeJournal($: Files, path: string, change: (existing: st
   const existing = (await $.fs.exists(path)) ? String(await $.fs.read(path)) : ''
   await $.fs.write(path, change(existing))
 }
+
+// Mirror's home folder (BAND-CONTRACT-v1): MIRROR_HOME when set, else HOME/.mirror. Its two files for the band
+// are nudge-now.json (Mirror writes) and band.json (the band writes).
+export async function mirrorHome($: Places): Promise<string> {
+  const set = await $.env.get('MIRROR_HOME')
+
+  return set === undefined || set === '' ? `${await home($)}/.mirror` : slashless(set)
+}
+
+// A file's text, or null when it is not there or cannot be read.
+export async function readOptional($: Files, path: string): Promise<string | null> {
+  try {
+    return (await $.fs.exists(path)) ? String(await $.fs.read(path)) : null
+  } catch {
+    return null
+  }
+}
+
+// One atomic write: the text goes to a file of its own in the same folder, then is renamed over the target, so a reader
+// never sees half a file. The host's own write has no rename, so `mv` does it (no shell); where that fails, the text is
+// written straight to the target (a reader that meets half of it reads the file as empty, which Mirror takes as "no band").
+export async function writeAtomic($: Files & Pick<EngineInterface, 'process'>, path: string, text: string, tag: string): Promise<void> {
+  const temp = `${path}.${tag}.tmp`
+  await $.fs.write(temp, text)
+  try {
+    if ((await $.process.run(['mv', '-f', temp, path])).exitCode === 0) return
+  } catch {
+    // fall through to the plain write
+  }
+  await $.fs.write(path, text)
+}

@@ -1,11 +1,12 @@
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { BandAction, Pending, Snapshot } from '../types'
+import type { BandAction, MirrorButton, Pending, Snapshot } from '../types'
 import { BREATHE_AFTER_MS, bandModel } from './band'
 import { ASK_DECISION, answer, toCard } from './cards'
 import { NO_FOCUS, UNREADABLE_FOCUS, goalsState, parseFocus } from './focus'
 import { PROPOSE_GOALS, goalsMessage, proposalMessage, toProposal } from './goals-ask'
-import { goalsFile, journalPath, languageSetting, localeVars, readFocusFile, writeJournal } from './io'
+import { goalsFile, journalPath, languageSetting, localeVars, mirrorHome, readFocusFile, readOptional, writeAtomic, writeJournal } from './io'
+import { BAND_FILE, HEARTBEAT_MS, NUDGE_FILE, POLL_AFTER_MS, answerAt, bandText, heldPrompt, parseBand, parseNudge, withAnswer, withHeartbeat } from './mirror'
 import { currentLang, langOfName, nativeName, pickLang, setLang, t } from './i18n'
 import { askReply } from './model'
 import { questionToShow, toAsked } from './next'
@@ -72,6 +73,10 @@ import {
   getDoneLast,
   getFocus,
   getLastPrompt,
+  getLastPromptAt,
+  getMirror,
+  updateLastPromptAt,
+  updateMirror,
   getMoment,
   getNextUp,
   getPending,
@@ -245,16 +250,23 @@ async function snapshot($: State & Pick<EngineInterface, 'clock' | 'session' | '
     standup: await getStandup($),
     shutdown: { doc: await getShutdown($), draft: (await getShutdownDraft($)).text, note: (await getShutdownDraft($)).note, forced: await getShutdownForced($) },
     wins: await getWins($),
+    mirror: (await getMirror($)).nudge,
   }
 }
 
-type Presser = Pick<EngineInterface, 'state' | 'store' | 'clock' | 'prompt' | 'ui' | 'fs' | 'env'>
+type Presser = Pick<EngineInterface, 'state' | 'store' | 'clock' | 'prompt' | 'ui' | 'fs' | 'env' | 'session' | 'process' | 'command'>
 
 // Sends the person's message and does not wait for it: the docs call submit as `void`, and a turn of its own
 // starts "once the session is idle", so waiting would hold the band's handler for the whole turn (seen 14 Nov:
 // presses made meanwhile showed only after the next message). A refusal is dropped; the band was already updated.
 function submitAndGo($: Pick<EngineInterface, 'prompt'>, text: string) {
   void $.prompt.submit({ text, asUser: true }).catch(() => undefined)
+}
+
+// Runs a slash command as the person's own and does not wait for it. The host refuses a prompt that begins with "/"
+// (checked 22 Nov 2026: "run one with $.command.run"), so Mirror's /mirror:check goes this way.
+function runAndGo($: Pick<EngineInterface, 'command'>, command: string) {
+  void $.command.run({ command }).catch(() => undefined)
 }
 
 // A suggested answer to the inferred question: one press, one message.
@@ -394,6 +406,74 @@ async function todaySave($: Presser) {
   $.ui.toast(t('toast.saved', { headline: headline(doc.items.length), path }))
 }
 
+// ---- The Mirror contract (BAND-CONTRACT-v1; the pure half is mirror.ts) --------------------------------------------
+
+// Reads band.json, changes it and writes it back, atomically. A file that is missing or broken is read as empty, so
+// the write replaces it. Nothing is written when Mirror has no home folder (it is not installed): the band does not make one.
+async function changeBand($: Presser, change: (band: ReturnType<typeof parseBand>) => ReturnType<typeof parseBand>): Promise<void> {
+  const dir = await mirrorHome($)
+  if (!(await $.fs.exists(dir))) return
+
+  const path = `${dir}/${BAND_FILE}`
+  await writeAtomic($, path, bandText(change(parseBand(await readOptional($, path)))), await $.session.id())
+}
+
+// The heartbeat: this session's entry, rewritten every HEARTBEAT_MS while the band is on (not in the baseline week, when
+// it draws nothing). Never throws: a failed write only lets the heartbeat go stale, and Mirror then falls back to the chat.
+async function beat($: Presser): Promise<void> {
+  try {
+    if ((await getKpi($)).mode === 'off') return
+    const now = await $.clock.now()
+    const id = await $.session.id()
+    await changeBand($, band => withHeartbeat(band, id, now))
+  } catch {
+    // stale heartbeat, chat fallback
+  }
+}
+
+// Looks for Mirror's nudge for this session; the band redraws when what it shows changes. A nudge the person already
+// answered stays hidden until Mirror removes the file.
+async function pollNudge($: Presser): Promise<void> {
+  try {
+    const raw = await readOptional($, `${await mirrorHome($)}/${NUDGE_FILE}`)
+    const state = await getMirror($)
+    const found = raw === null ? null : parseNudge(raw, await $.session.id())
+    const nudge = found !== null && found.at === state.answeredAt ? null : found
+    if (JSON.stringify(nudge) === JSON.stringify(state.nudge)) return
+
+    await updateMirror($, now => ({ ...now, nudge }))
+    $.ui.invalidate('ui.render')
+  } catch {
+    // no nudge shown
+  }
+}
+
+// A button of Mirror's nudge: the answer goes into band.json first, then what the table asks for. The nudge is closed at
+// once, so a second press does nothing.
+async function mirrorPress($: Presser, button: MirrorButton): Promise<void> {
+  const { nudge } = await getMirror($)
+  if (nudge === null) return
+
+  const now = await $.clock.now()
+  const id = await $.session.id()
+  // "Send anyway" needs the held message: the box, else the one the band saw just before the nudge. With none, it only answers.
+  const held = button === 'send' ? heldPrompt((await $.prompt.read()).text, await getLastPrompt($), await getLastPromptAt($), nudge.at) : ''
+
+  await updateMirror($, () => ({ nudge: null, answeredAt: nudge.at }))
+  try {
+    await changeBand($, band => withAnswer(band, id, answerAt(now, nudge.at), button))
+  } catch (err) {
+    $.ui.toast(t('toast.notSaved', { path: BAND_FILE, why: String(err instanceof Error ? err.message : err).slice(0, 120) }))
+  }
+  $.ui.invalidate('ui.render')
+
+  if (button === 'check' && (await claim($, t('mirror.check')))) runAndGo($, 'mirror:check')
+  if (button === 'send') {
+    if (held === '') return void $.ui.toast(t('mirror.manual'))
+    if (await claim($, t('mirror.send'))) submitAndGo($, held)
+  }
+}
+
 // The only place a press is carried out: one case per BandAction.
 async function dispatch($: Presser, action: BandAction): Promise<void> {
   switch (action.kind) {
@@ -458,6 +538,8 @@ async function dispatch($: Presser, action: BandAction): Promise<void> {
       return todaySave($)
     case 'todaySkip':
       return answerWins($, await $.clock.now())
+    case 'mirror':
+      return mirrorPress($, action.button)
   }
 }
 
@@ -488,6 +570,10 @@ export const register: Register = on => {
     await noteKpi($, dayKey(await $.clock.now()), { sessions: 1 })
     await refreshFocus($)
     $.clock.every(60000, () => void refreshFocus($))
+    // Mirror (BAND-CONTRACT-v1): a heartbeat now and every 30 s; each beat also looks for a nudge (more looks follow each message).
+    void beat($)
+    void pollNudge($)
+    $.clock.every(HEARTBEAT_MS, () => void Promise.all([beat($), pollNudge($)]))
     await $.command.register({ name: 'coanda-setup', description: t('cmd.setup.desc') })
     await $.command.register({ name: 'coanda-today', description: t('cmd.today.desc') })
     await $.command.register({ name: 'coanda-specimen', description: 'Show or hide every drawing option of the band (for design checks)' })
@@ -576,7 +662,9 @@ export const register: Register = on => {
       // moment; the render rechecks the clock and isWorking, so a timer left over from a finished run draws nothing.
       const started = await $.clock.now()
       void updateWorkStart($, () => started)
+      void updateLastPromptAt($, () => started)
       $.clock.after(BREATHE_AFTER_MS, () => $.ui.invalidate('ui.render'))
+      for (const ms of POLL_AFTER_MS) $.clock.after(ms, () => void pollNudge($))
       void updateSuggestions($, () => [])
       void updateMoment($, () => 'other')
       // Typing in the prompt is the person's own answer (v3 rule 3): it answers the open card the band
