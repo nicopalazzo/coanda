@@ -1,2 +1,5 @@
 # Side sessions work in their own worktrees here
 .claude/worktrees/
+
+# macOS
+.DS_Store
