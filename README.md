@@ -8,7 +8,7 @@ Coanda adds one calm band above the prompt in the Claude desktop app (the Code t
 
 Coanda is a *mod*: a small add-on that changes how Claude's own window looks. It does not send your data anywhere. It reads one file on your computer (your goals file) and keeps its small settings in Claude's own plugin folder.
 
-> **Status: private test, version 0.1.54.** The repository is private, so you need access first. Ask Nicolas to add your GitHub account as a collaborator, and make sure you are signed in to GitHub on your computer (`gh auth login`, or your usual Git sign-in). License: all rights reserved (see [LICENSE](LICENSE)); shared privately for testing.
+> **Status: early test, version 0.1.61.** Licence: [PolyForm Noncommercial 1.0.0](LICENSE). It is free for personal, educational and other noncommercial use; commercial use needs the author's permission.
 
 ## Install (3 steps)
 
