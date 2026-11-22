@@ -1,7 +1,11 @@
 {
   "name": "coanda",
   "version": "0.1.61",
-  "author": { "name": "Nicolas Palazzo" },
+  "author": {
+    "name": "Nicolas Palazzo"
+  },
   "description": "A calm band above the prompt: the goal, what the agent is doing now, one question at a time",
+  "repository": "https://github.com/nicopalazzo/coanda",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "types": "./types/index.d.ts"
 }
