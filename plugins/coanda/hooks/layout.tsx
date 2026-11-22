@@ -69,3 +69,36 @@ export function placeScreen(draw: Draw, rows: number, items: Placed[]): JSX.Elem
     </Box>
   )
 }
+
+// How many rows a wrapping line of text takes in `width` cells (a rows screen places everything by row, so the
+// next item has to know). Measured in the 22 Nov screenshot: a semibold question runs about 0.82 of a cell per
+// character; 0.9 keeps a margin, so a guess errs toward one spare row, never toward text drawn over the buttons.
+// Wide characters (Chinese) take 2 cells. Words wrap whole; a word wider than the line is broken.
+export const CELL_PER_CHAR = 0.9
+// Rounded, so 100 characters at 0.9 are 90 cells and not 90.00000000000001 (which would count a spare row).
+const cellsOf = (s: string): number => Math.round([...s].reduce((sum, ch) => sum + ((ch.codePointAt(0) ?? 0) > 0x2e80 ? 2 : CELL_PER_CHAR), 0) * 1000) / 1000
+
+export function linesOf(text: string, width: number): number {
+  const room = Math.max(width, 1)
+  let lines = 1
+  let used = 0
+
+  for (const word of text.split(/\s+/).filter(w => w !== '')) {
+    const w = cellsOf(word)
+    const need = used === 0 ? w : used + CELL_PER_CHAR + w
+
+    if (need <= room) {
+      used = need
+    } else if (used === 0 || w > room) {
+      // A word wider than the line: it fills whole lines and the rest starts the last one.
+      const extra = Math.ceil(w / room) - (used === 0 ? 1 : 0)
+      lines += extra
+      used = w % room
+    } else {
+      lines += 1
+      used = w
+    }
+  }
+
+  return lines
+}
