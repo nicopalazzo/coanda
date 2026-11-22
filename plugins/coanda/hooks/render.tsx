@@ -1,7 +1,7 @@
 import type { ElementTable } from 'claude-code'
 
 import type { BandAction, BandButton, BandInput, BandModel, BandRow } from '../types'
-import { ABOVE_PRIMARY, AFTER_HEADING, INSET, ruleItem, placeScreen } from './layout'
+import { ABOVE_PRIMARY, AFTER_HEADING, INSET, linesOf, ruleItem, placeScreen } from './layout'
 import type { Placed } from './layout'
 import { stampOf, t } from './i18n'
 
@@ -35,6 +35,9 @@ const OK = 'success'
 // The day record's chips: the Dusk tint (system tint / hover shade), fixed hex.
 const TINT = '#F0F3FE'
 const TINT_INK = '#414C8C'
+
+// Cells of a tag, counted as linesOf counts text (a tag is small, mono: one cell per character is generous).
+const cellsIn = (s: string): number => [...s].length
 
 // The label column, in cells: 16 keeps "SETUP · 2 OF 2" on one line (seen C2).
 export const LABEL_WIDTH = 16
@@ -292,8 +295,14 @@ export function renderBand(model: BandModel, draw: Draw, setupRows?: number): JS
             </Box>
           ),
         })
+        // A question wraps: it takes as many rows as its text needs in the room the tags leave (seen 22 Nov: a 2-line question had the buttons drawn over its second line). A status line truncates, so it is one row.
+        const tagCells = (chip === undefined ? 0 : cellsIn(`⚠ ${chip}`)) + (r.source === undefined ? 0 : cellsIn(stampOf(r.source)))
+        const tagCount = (chip === undefined ? 0 : 1) + (r.source === undefined ? 0 : 1)
+        const room = inner - tagCells - tagCount - (r.breathe === true ? 12 : 0)
+        const wraps = first !== undefined && (r.part === 'question' || r.part === 'setup' || r.part === 'primary' || r.part === 'shutdown' || r.part === 'today' || r.part === 'sent')
+        const textRows = wraps ? linesOf(first, room) : 1
         // The 28 px circle is taller than one row (20 px): the breathing line takes two.
-        y += r.breathe === true ? 2 : 1
+        y += Math.max(textRows, r.breathe === true ? 2 : 1)
       }
       // The stand-up nudge: its muted line, and the quiet "Not now" on the same line.
       if (r.note !== undefined) {
