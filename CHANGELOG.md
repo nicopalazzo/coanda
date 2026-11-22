@@ -2,6 +2,10 @@
 
 One line per release. Newest first.
 
+## 0.1.62: shutdown only when you end the day
+
+- The shutdown question ("What's tomorrow's first step?") no longer opens by itself at 18:30. It shows only when you type "Nico out" or "shutdown" as the whole message, or run `/coanda-shutdown`. The same words inside a sentence ("done", "stop", "Next action: shutdown") do not open it.
+
 ## 0.1.61: Setup waits for the change
 
 - Setup: after "Change" (or "Ask Claude to fix it") the band no longer goes back to the old goals when Claude asks its question in the chat. It says "Changing your goals with Claude: answer in the chat", offers "Cancel", and shows the new goals once the file has really changed.

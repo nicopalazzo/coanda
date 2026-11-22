@@ -12,7 +12,7 @@ import { questionToShow, toAsked } from './next'
 import type { PlanInput } from './plan'
 import { applyPlan, noteCall } from './plan'
 import { blankOf } from './question'
-import { checkShutdown } from './shutdown'
+import { checkShutdown, isShutdownPhrase } from './shutdown'
 import { dayKey } from './time'
 import { renderDemo, renderDemoOffer, renderDemoStrip } from './demo'
 import { addSample, backupFound, demoFolder, demoGoalsPath, resetDemo, restoreMine, startDemo, writeDemoGoals } from './demo-run'
@@ -566,6 +566,11 @@ export const register: Register = on => {
       isFreshPlan = false
       // A message that starts with a redirect word counts as a correction (the KPI test); the words are not kept.
       if (isCorrection(e.text)) await noteKpi($, dayKey(await $.clock.now()), { corrections: 1 })
+      // "Nico out" or "shutdown" on its own ends the day: the shutdown question shows, as /coanda-shutdown does.
+      if (isShutdownPhrase(e.text)) {
+        await updateShutdownDraft($, () => ({ text: '', note: '' }))
+        await updateShutdownForced($, () => true)
+      }
       void updateLastPrompt($, () => e.text)
       // A new run: the band breathes once it has lasted BREATHE_AFTER_MS. One redraw is asked for at that
       // moment; the render rechecks the clock and isWorking, so a timer left over from a finished run draws nothing.
@@ -682,7 +687,7 @@ export const register: Register = on => {
     return { text: t('cmd.demo.on') }
   })
 
-  // /coanda-shutdown: the shutdown question shows now, whatever the hour or the day's answer, until Save or Skip.
+  // /coanda-shutdown: the shutdown question shows now, whatever the day's answer, until Save or Skip.
   on('command.run', { command: 'coanda-shutdown' }, async $ => {
     await updateShutdownDraft($, () => ({ text: '', note: '' }))
     await updateShutdownForced($, () => true)
